@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>链接提取功能测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }
+        .test-case { margin-bottom: 20px; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .input { background: #f5f5f5; padding: 10px; margin: 10px 0; white-space: pre-wrap; }
+        .output { background: #e8f5e8; padding: 10px; margin: 10px 0; }
+        .error { background: #ffe8e8; }
+    </style>
+</head>
+<body>
+    <h1>链接提取功能测试</h1>
+    
+    <div id="testResults"></div>
+
+    <script>
+        // 复制链接提取函数
+        function extractUrlFromShareText(shareText) {
+            if (!shareText || typeof shareText !== 'string') {
+                return shareText;
+            }
+            
+            const urlPatterns = [
+                // 抖音链接模式
+                /https?:\/\/v\.douyin\.com\/[A-Za-z0-9\-_]+/gi,
+                /https?:\/\/www\.douyin\.com\/[^\s]+/gi,
+                /https?:\/\/[^\s]*douyin\.com[^\s]*/gi,
+                
+                // 快手链接模式
+                /https?:\/\/[^\s]*kuaishou\.com[^\s]*/gi,
+                /https?:\/\/[^\s]*ks\.com[^\s]*/gi,
+                
+                // 小红书链接模式
+                /https?:\/\/[^\s]*xiaohongshu\.com[^\s]*/gi,
+                /https?:\/\/[^\s]*xhs\.com[^\s]*/gi,
+                
+                // 哔哩哔哩链接模式
+                /https?:\/\/[^\s]*bilibili\.com[^\s]*/gi,
+                /https?:\/\/[^\s]*b23\.tv[^\s]*/gi,
+                
+                // 微视链接模式
+                /https?:\/\/[^\s]*weishi\.qq\.com[^\s]*/gi,
+                
+                // 通用HTTP/HTTPS链接模式（作为兜底）
+                /https?:\/\/[^\s]+/gi
+            ];
+            
+            for (const pattern of urlPatterns) {
+                const matches = shareText.match(pattern);
+                if (matches && matches.length > 0) {
+                    let extractedUrl = matches[0];
+                    extractedUrl = extractedUrl.replace(/[，。！？；：、""''（）【】]$/, '');
+                    return extractedUrl;
+                }
+            }
+            
+            return shareText;
+        }
+
+        // 测试用例
+        const testCases = [
+            {
+                name: "用户提供的抖音分享内容",
+                input: "5.87 复制打开抖音，看看【圈圈木的作品】这期真是我定制的# 上车舞 # 团播 # 舞蹈  https://v.douyin.com/oGcdsob-2Q8/ F@H.Vl 06/10 dnd:/",
+                expected: "https://v.douyin.com/oGcdsob-2Q8/"
+            },
+            {
+                name: "纯抖音链接",
+                input: "https://www.douyin.com/video/7123456789",
+                expected: "https://www.douyin.com/video/7123456789"
+            },
+            {
+                name: "抖音短链接",
+                input: "https://v.douyin.com/ABC123/",
+                expected: "https://v.douyin.com/ABC123/"
+            },
+            {
+                name: "快手分享内容",
+                input: "看看这个视频 https://www.kuaishou.com/short-video/3x123456789 很有意思",
+                expected: "https://www.kuaishou.com/short-video/3x123456789"
+            },
+            {
+                name: "小红书分享内容",
+                input: "小红书分享 https://www.xiaohongshu.com/explore/abc123 喜欢的话记得点赞",
+                expected: "https://www.xiaohongshu.com/explore/abc123"
+            },
+            {
+                name: "无效输入",
+                input: "这里没有链接，只是普通文本",
+                expected: "这里没有链接，只是普通文本"
+            }
+        ];
+
+        // 运行测试
+        function runTests() {
+            const resultsDiv = document.getElementById('testResults');
+            let allPassed = true;
+
+            testCases.forEach((testCase, index) => {
+                const result = extractUrlFromShareText(testCase.input);
+                const passed = result === testCase.expected;
+                allPassed = allPassed && passed;
+
+                const testDiv = document.createElement('div');
+                testDiv.className = 'test-case';
+                
+                testDiv.innerHTML = `
+                    <h3>测试 ${index + 1}: ${testCase.name} ${passed ? '✅' : '❌'}</h3>
+                    <div class="input"><strong>输入:</strong><br>${testCase.input}</div>
+                    <div class="output ${passed ? '' : 'error'}"><strong>输出:</strong><br>${result}</div>
+                    <div class="output"><strong>期望:</strong><br>${testCase.expected}</div>
+                `;
+                
+                resultsDiv.appendChild(testDiv);
+            });
+
+            // 添加总结
+            const summaryDiv = document.createElement('div');
+            summaryDiv.innerHTML = `<h2>测试总结: ${allPassed ? '全部通过 🎉' : '部分失败 ⚠️'}</h2>`;
+            resultsDiv.insertBefore(summaryDiv, resultsDiv.firstChild);
+        }
+
+        // 页面加载后运行测试
+        document.addEventListener('DOMContentLoaded', runTests);
+    </script>
+</body>
+</html>

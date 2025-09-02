@@ -151,42 +151,103 @@ class VideoDownloaderApp {
     }
     
     /**
-     * 验证输入的URL格式
-     * @param {string} url - 待验证的URL
-     * @returns {Object} 包含isValid和message的验证结果
+     * 从分享文本中智能提取视频链接
+     * @param {string} shareText - 分享的完整文本内容
+     * @returns {string} 提取出的URL，如果未找到则返回原文本
      */
-    validateUrl(url) {
-        if (!url || url.trim().length === 0) {
+    extractUrlFromShareText(shareText) {
+        if (!shareText || typeof shareText !== 'string') {
+            return shareText;
+        }
+        
+        // 多种URL匹配模式，覆盖各大平台的链接格式
+        const urlPatterns = [
+            // 抖音链接模式
+            /https?:\/\/v\.douyin\.com\/[A-Za-z0-9\-_]+/gi,
+            /https?:\/\/www\.douyin\.com\/[^\s]+/gi,
+            /https?:\/\/[^\s]*douyin\.com[^\s]*/gi,
+            
+            // 快手链接模式
+            /https?:\/\/[^\s]*kuaishou\.com[^\s]*/gi,
+            /https?:\/\/[^\s]*ks\.com[^\s]*/gi,
+            
+            // 小红书链接模式
+            /https?:\/\/[^\s]*xiaohongshu\.com[^\s]*/gi,
+            /https?:\/\/[^\s]*xhs\.com[^\s]*/gi,
+            
+            // 哔哩哔哩链接模式
+            /https?:\/\/[^\s]*bilibili\.com[^\s]*/gi,
+            /https?:\/\/[^\s]*b23\.tv[^\s]*/gi,
+            
+            // 微视链接模式
+            /https?:\/\/[^\s]*weishi\.qq\.com[^\s]*/gi,
+            
+            // 通用HTTP/HTTPS链接模式（作为兜底）
+            /https?:\/\/[^\s]+/gi
+        ];
+        
+        // 逐个尝试匹配模式
+        for (const pattern of urlPatterns) {
+            const matches = shareText.match(pattern);
+            if (matches && matches.length > 0) {
+                // 返回第一个匹配的URL
+                let extractedUrl = matches[0];
+                
+                // 清理URL末尾可能的标点符号
+                extractedUrl = extractedUrl.replace(/[，。！？；：、""''（）【】]$/, '');
+                
+                console.log(`🔗 从分享文本中提取到URL: ${extractedUrl}`);
+                return extractedUrl;
+            }
+        }
+        
+        console.log('⚠️ 未找到有效URL，返回原始文本');
+        return shareText;
+    }
+
+    /**
+     * 验证输入的URL格式
+     * @param {string} input - 用户输入的内容（可能是URL或包含URL的分享文本）
+     * @returns {Object} 包含isValid、message和extractedUrl的验证结果
+     */
+    validateUrl(input) {
+        if (!input || input.trim().length === 0) {
             return {
                 isValid: false,
-                message: '请输入视频链接'
+                message: '请输入视频链接或分享内容'
             };
         }
         
+        // 先尝试从输入中提取URL
+        const extractedUrl = this.extractUrlFromShareText(input.trim());
+        
         // 基础URL格式验证
         const urlPattern = /^https?:\/\/.+/i;
-        if (!urlPattern.test(url)) {
+        if (!urlPattern.test(extractedUrl)) {
             return {
                 isValid: false,
-                message: '请输入有效的网址链接（需包含http://或https://）'
+                message: '未找到有效的视频链接，请确保复制了完整的分享内容',
+                extractedUrl: extractedUrl
             };
         }
         
         // 检查是否为支持的平台
         const isSupportedPlatform = CONFIG.SUPPORTED_PLATFORMS.some(platform => 
-            url.toLowerCase().includes(platform)
+            extractedUrl.toLowerCase().includes(platform)
         );
         
         if (!isSupportedPlatform) {
             return {
                 isValid: false,
-                message: '暂不支持此平台，支持抖音、快手、小红书、哔哩哔哩等主流平台'
+                message: '暂不支持此平台，支持抖音、快手、小红书、哔哩哔哩等主流平台',
+                extractedUrl: extractedUrl
             };
         }
         
         return {
             isValid: true,
-            message: 'URL格式正确'
+            message: 'URL格式正确',
+            extractedUrl: extractedUrl
         };
     }
     
@@ -199,20 +260,31 @@ class VideoDownloaderApp {
             return;
         }
         
-        const url = this.dom.videoInput.value.trim();
+        const inputText = this.dom.videoInput.value.trim();
         
-        // 验证URL
-        const validation = this.validateUrl(url);
+        // 验证输入并提取URL
+        const validation = this.validateUrl(inputText);
         if (!validation.isValid) {
             this.showToast('error', validation.message);
             return;
         }
         
+        // 使用提取出的URL
+        const extractedUrl = validation.extractedUrl;
+        
+        // 如果提取的URL与原输入不同，更新输入框显示
+        if (extractedUrl !== inputText) {
+            this.dom.videoInput.value = extractedUrl;
+            this.showToast('info', '已自动提取视频链接');
+            console.log(`📝 输入内容: ${inputText}`);
+            console.log(`🔗 提取的URL: ${extractedUrl}`);
+        }
+        
         try {
             this.setProcessingState(true);
             
-            // 调用后端API解析视频
-            const result = await this.callParserAPI(url);
+            // 调用后端API解析视频（使用提取出的URL）
+            const result = await this.callParserAPI(extractedUrl);
             
             if (result.success) {
                 this.displaySuccessResult(result);
