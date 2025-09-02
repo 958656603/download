@@ -42,16 +42,19 @@
 
 # 函数配置
 [functions]
-  # 函数运行时配置
-  node_bundler = "esbuild"
+  # Python函数运行时配置
+  # 移除node_bundler，因为我们使用的是Python函数
   
   # 针对特定函数的配置
   [functions."parser"]
     # 函数超时时间（秒）
     timeout = 30
     
-    # 内存限制（MB）
-    memory = 128
+    # 内存限制（MB）  
+    memory = 256
+    
+    # 指定运行时（Python）
+    runtime = "python3.8"
 
 # 头部配置 - 设置安全性和缓存策略
 [[headers]]
