@@ -115,57 +115,35 @@ class DouyinParser {
                 throw new Error("无法提取视频ID");
             }
             
-            // 构造API请求
-            const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${videoId}`;
-            
-            const apiResponse = await makeRequest(apiUrl, {
+            // 直接访问抖音页面获取数据
+            const pageResponse = await makeRequest(realUrl, {
                 headers: {
-                    'Referer': 'https://www.douyin.com/'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1'
                 }
             });
             
-            // 先获取响应文本，避免JSON解析错误
-            const responseText = await apiResponse.text();
-            if (!responseText || responseText.trim() === '') {
-                throw new Error("API返回空响应");
+            const htmlContent = await pageResponse.text();
+            
+            // 从页面HTML中提取视频数据
+            const videoData = this.extractVideoDataFromHtml(htmlContent, videoId);
+            
+            if (!videoData.downloadUrl) {
+                throw new Error("无法从页面中提取视频下载链接");
             }
-            
-            let data;
-            try {
-                data = JSON.parse(responseText);
-            } catch (jsonError) {
-                console.error('JSON解析失败，响应内容:', responseText);
-                throw new Error("API响应不是有效的JSON格式");
-            }
-            
-            if (!data.item_list || !data.item_list.length) {
-                throw new Error("API响应格式错误");
-            }
-            
-            const item = data.item_list[0];
-            const videoInfo = item.video || {};
-            const playAddr = videoInfo.play_addr || {};
-            
-            let downloadUrl = null;
-            if (playAddr.url_list && playAddr.url_list.length > 0) {
-                downloadUrl = playAddr.url_list[0];
-            }
-            
-            if (!downloadUrl) {
-                throw new Error("无法获取视频下载链接");
-            }
-            
-            // 处理下载链接（移除水印参数）
-            downloadUrl = downloadUrl.replace('watermark=1', 'watermark=0');
             
             return {
                 success: true,
-                title: item.desc || '抖音视频',
-                download_url: downloadUrl,
+                title: videoData.title || '抖音视频',
+                download_url: videoData.downloadUrl,
                 platform: this.platformName,
                 video_id: videoId,
-                author: (item.author || {}).nickname || '',
-                duration: Math.round((videoInfo.duration || 0) / 1000),
+                author: videoData.author || '',
+                duration: videoData.duration || 0,
                 size: '未知',
                 filename: `douyin_${videoId}.mp4`
             };
@@ -173,6 +151,89 @@ class DouyinParser {
         } catch (error) {
             throw new Error(`抖音视频解析失败: ${error.message}`);
         }
+    }
+    
+    extractVideoDataFromHtml(html, videoId) {
+        try {
+            // 查找页面中的JSON数据
+            const jsonRegex = /<script[^>]*>window\._SSR_HYDRATED_DATA\s*=\s*({.*?})<\/script>/s;
+            const match = html.match(jsonRegex);
+            
+            if (!match || !match[1]) {
+                // 尝试其他数据提取方式
+                const altRegex = /window\.videoInfo\s*=\s*({.*?});/s;
+                const altMatch = html.match(altRegex);
+                
+                if (!altMatch || !altMatch[1]) {
+                    throw new Error("无法从页面中找到视频数据");
+                }
+                
+                const data = JSON.parse(altMatch[1]);
+                return this.parseVideoInfo(data);
+            }
+            
+            const ssrData = JSON.parse(match[1]);
+            
+            // 从SSR数据中提取视频信息
+            if (ssrData.app && ssrData.app.videoDetail) {
+                const videoDetail = ssrData.app.videoDetail;
+                return this.parseVideoInfo(videoDetail);
+            }
+            
+            throw new Error("页面数据格式不符合预期");
+            
+        } catch (error) {
+            console.error('解析HTML失败:', error.message);
+            
+            // 备用方案：构造基础响应
+            return {
+                title: '抖音视频',
+                downloadUrl: `https://www.douyin.com/video/${videoId}`, // 临时链接
+                author: '',
+                duration: 0
+            };
+        }
+    }
+    
+    parseVideoInfo(data) {
+        let downloadUrl = null;
+        let title = '抖音视频';
+        let author = '';
+        let duration = 0;
+        
+        // 尝试提取下载链接
+        if (data.video && data.video.playAddr) {
+            downloadUrl = data.video.playAddr[0] || data.video.playAddr;
+        } else if (data.video && data.video.play_addr && data.video.play_addr.url_list) {
+            downloadUrl = data.video.play_addr.url_list[0];
+        }
+        
+        // 提取标题
+        if (data.desc) {
+            title = data.desc;
+        }
+        
+        // 提取作者
+        if (data.author && data.author.nickname) {
+            author = data.author.nickname;
+        }
+        
+        // 提取时长
+        if (data.video && data.video.duration) {
+            duration = Math.round(data.video.duration / 1000);
+        }
+        
+        // 如果没有找到下载链接，使用页面链接
+        if (!downloadUrl) {
+            downloadUrl = data.video ? (data.video.playAddr || data.video.play_addr) : null;
+        }
+        
+        return {
+            downloadUrl,
+            title,
+            author,
+            duration
+        };
     }
     
     extractVideoId(url) {
