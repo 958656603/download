@@ -72,7 +72,8 @@ async function makeRequest(url, options = {}) {
                 signal: AbortSignal.timeout(CONFIG.REQUEST_TIMEOUT)
             });
             
-            if (!response.ok) {
+            // 对于重定向状态码，不抛出错误
+            if (!response.ok && !(response.status >= 300 && response.status < 400)) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
             
