@@ -1,0 +1,45 @@
+# Python依赖包配置文件
+# 用于Netlify Functions的Python运行环境
+
+# 核心HTTP请求库
+requests==2.31.0
+
+# JSON处理（Python内置，但显式声明版本兼容性）
+# json - 内置库
+
+# URL解析工具（Python内置）
+# urllib - 内置库
+
+# 正则表达式（Python内置）
+# re - 内置库
+
+# 类型提示支持（Python 3.5+内置）
+# typing - 内置库
+
+# 异常追踪（Python内置）
+# traceback - 内置库
+
+# 可选：更强大的HTTP客户端（如需要）
+# httpx==0.24.1
+
+# 可选：HTML解析库（如需要解析复杂HTML结构）
+# beautifulsoup4==4.12.2
+# lxml==4.9.3
+
+# 可选：JSON处理增强库
+# ujson==5.8.0
+
+# 可选：用户代理生成库
+# fake-useragent==1.4.0
+
+# 开发和测试依赖（本地开发时使用）
+# pytest==7.4.0
+# pytest-cov==4.1.0
+# black==23.7.0
+# flake8==6.0.0
+
+# 注意：
+# 1. Netlify Functions会自动安装requirements.txt中列出的包
+# 2. 建议固定版本号以确保部署一致性
+# 3. 避免使用过大的包，会影响冷启动时间
+# 4. Python内置库无需在此文件中声明

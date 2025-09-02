@@ -1,0 +1,104 @@
+# Netlify 配置文件
+# 用于配置构建、部署和函数设置
+
+[build]
+  # 构建命令 - 由于是纯静态前端，无需构建步骤
+  command = "echo 'No build command required - static frontend only'"
+  
+  # 发布目录 - 静态文件所在的目录
+  publish = "public"
+  
+  # Serverless Functions 目录
+  functions = "netlify/functions"
+
+# 重定向规则配置
+# 将 /api/* 路径重定向到对应的 Netlify Functions
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# 为了方便访问，也可以直接访问函数
+[[redirects]]
+  from = "/parse"
+  to = "/.netlify/functions/parser"
+  status = 200
+
+# 处理单页应用的路由（可选）
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  conditions = {Role = ["admin"], Country = ["US"]}
+
+# 环境变量配置（可选）
+[build.environment]
+  # Python 版本
+  PYTHON_VERSION = "3.8"
+  
+  # 可以在这里设置其他环境变量
+  # API_TIMEOUT = "30"
+  # MAX_RETRIES = "3"
+
+# 函数配置
+[functions]
+  # 函数运行时配置
+  node_bundler = "esbuild"
+  
+  # 针对特定函数的配置
+  [functions."parser"]
+    # 函数超时时间（秒）
+    timeout = 30
+    
+    # 内存限制（MB）
+    memory = 128
+
+# 头部配置 - 设置安全性和缓存策略
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # 安全头
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    
+    # CORS 配置
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type, Authorization"
+
+# 静态资源缓存配置
+[[headers]]
+  for = "/style.css"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000"
+
+[[headers]]
+  for = "/script.js"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000"
+
+# API 端点的特殊配置
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+    
+# 错误页面配置（可选）
+[[redirects]]
+  from = "/404"
+  to = "/index.html"
+  status = 404
+
+# 部署预览配置
+[context.deploy-preview]
+  command = "echo 'Deploy preview - static files only'"
+
+# 分支部署配置
+[context.branch-deploy]
+  command = "echo 'Branch deploy - static files only'"
+
+# 生产环境配置
+[context.production]
+  command = "echo 'Production deploy - static files only'"

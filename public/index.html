@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频下载器 - 无水印视频解析工具</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- 引入现代化的图标库 -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- 主容器 -->
+    <div class="container">
+        <!-- 头部标题区域 -->
+        <header class="header">
+            <div class="header-content">
+                <i class="fas fa-download header-icon"></i>
+                <h1>视频下载器</h1>
+                <p class="subtitle">支持多平台无水印视频解析下载</p>
+            </div>
+        </header>
+
+        <!-- 主要功能区域 -->
+        <main class="main-content">
+            <!-- 输入区域 -->
+            <div class="input-section">
+                <div class="input-group">
+                    <label for="videoUrl" class="input-label">
+                        <i class="fas fa-link"></i>
+                        视频链接
+                    </label>
+                    <div class="input-container">
+                        <input 
+                            type="url" 
+                            id="videoUrl" 
+                            class="video-input" 
+                            placeholder="请输入视频分享链接，支持抖音、快手、小红书等平台..."
+                            autocomplete="off"
+                        >
+                        <button type="button" id="clearBtn" class="clear-btn" title="清空输入">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- 提交按钮 -->
+                <button type="button" id="parseBtn" class="parse-btn">
+                    <i class="fas fa-magic"></i>
+                    <span class="btn-text">解析视频</span>
+                </button>
+            </div>
+
+            <!-- 加载指示器 -->
+            <div id="loadingIndicator" class="loading-indicator hidden">
+                <div class="loading-spinner"></div>
+                <p class="loading-text">正在解析视频链接，请稍候...</p>
+            </div>
+
+            <!-- 结果显示区域 -->
+            <div id="resultSection" class="result-section hidden">
+                <!-- 成功结果 -->
+                <div id="successResult" class="result-card success-card hidden">
+                    <div class="result-header">
+                        <i class="fas fa-check-circle success-icon"></i>
+                        <h3>解析成功！</h3>
+                    </div>
+                    <div class="result-content">
+                        <div class="video-info">
+                            <p class="video-title" id="videoTitle">视频标题</p>
+                            <p class="video-meta">
+                                <span class="video-platform" id="videoPlatform">平台</span>
+                                <span class="video-separator">•</span>
+                                <span class="video-size" id="videoSize">文件大小</span>
+                            </p>
+                        </div>
+                        <div class="download-actions">
+                            <a href="#" id="downloadLink" class="download-btn" download>
+                                <i class="fas fa-download"></i>
+                                下载视频
+                            </a>
+                            <button type="button" id="copyLink" class="copy-btn">
+                                <i class="fas fa-copy"></i>
+                                复制链接
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 错误结果 -->
+                <div id="errorResult" class="result-card error-card hidden">
+                    <div class="result-header">
+                        <i class="fas fa-exclamation-triangle error-icon"></i>
+                        <h3>解析失败</h3>
+                    </div>
+                    <div class="result-content">
+                        <p class="error-message" id="errorMessage">链接解析失败，请检查链接是否正确</p>
+                        <div class="error-tips">
+                            <h4>常见问题：</h4>
+                            <ul>
+                                <li>确保链接格式正确完整</li>
+                                <li>检查网络连接是否正常</li>
+                                <li>某些私密视频可能无法解析</li>
+                                <li>请使用原始分享链接，不要使用缩短链接</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 使用说明 -->
+            <div class="instructions">
+                <h3><i class="fas fa-info-circle"></i> 使用说明</h3>
+                <div class="instructions-grid">
+                    <div class="instruction-item">
+                        <i class="fas fa-mobile-alt"></i>
+                        <h4>获取链接</h4>
+                        <p>在视频APP中点击"分享"按钮，复制分享链接</p>
+                    </div>
+                    <div class="instruction-item">
+                        <i class="fas fa-paste"></i>
+                        <h4>粘贴解析</h4>
+                        <p>将复制的链接粘贴到上方输入框，点击解析</p>
+                    </div>
+                    <div class="instruction-item">
+                        <i class="fas fa-download"></i>
+                        <h4>下载保存</h4>
+                        <p>解析成功后点击下载按钮，保存无水印视频</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- 页脚 -->
+        <footer class="footer">
+            <p>&copy; 2024 视频下载器 | 仅供个人学习使用，请尊重版权</p>
+        </footer>
+    </div>
+
+    <!-- Toast 通知组件 -->
+    <div id="toast" class="toast hidden">
+        <i class="toast-icon"></i>
+        <span class="toast-message"></span>
+    </div>
+
+    <!-- 引入JavaScript文件 -->
+    <script src="script.js"></script>
+</body>
+</html>
