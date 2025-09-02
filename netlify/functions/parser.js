@@ -124,7 +124,19 @@ class DouyinParser {
                 }
             });
             
-            const data = await apiResponse.json();
+            // 先获取响应文本，避免JSON解析错误
+            const responseText = await apiResponse.text();
+            if (!responseText || responseText.trim() === '') {
+                throw new Error("API返回空响应");
+            }
+            
+            let data;
+            try {
+                data = JSON.parse(responseText);
+            } catch (jsonError) {
+                console.error('JSON解析失败，响应内容:', responseText);
+                throw new Error("API响应不是有效的JSON格式");
+            }
             
             if (!data.item_list || !data.item_list.length) {
                 throw new Error("API响应格式错误");
