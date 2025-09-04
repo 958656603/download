@@ -1,469 +1,139 @@
-// 导入node-fetch （兼容Netlify Functions）
 const fetch = require('node-fetch');
 
 /**
- * 视频下载器 - Netlify Functions (JavaScript版本)
- * 负责解析各大视频平台的分享链接，提取无水印的原始视频下载地址
- * 支持抖音、快手、小红书、哔哩哔哩等主流视频平台
+ * 抖音视频解析器 - 简化版 (只使用最新算法)
+ * 基于腾讯云文章的最新解析方法
  */
-
-// ===== 配置常量 =====
-const CONFIG = {
-    // 请求超时时间（毫秒）
-    REQUEST_TIMEOUT: 30000,
-    
-    // 最大重试次数
-    MAX_RETRIES: 3,
-    
-    // 用户代理字符串
-    USER_AGENTS: [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0'
-    ],
-    
-    // 支持的视频平台配置
-    SUPPORTED_PLATFORMS: {
-        'douyin': ['douyin.com', 'dy.com', 'iesdouyin.com'],
-        'kuaishou': ['kuaishou.com', 'ks.com'],
-        'xiaohongshu': ['xiaohongshu.com', 'xhs.com'],
-        'bilibili': ['bilibili.com', 'b23.tv'],
-        'weishi': ['weishi.qq.com']
-    }
-};
 
 // ===== 工具函数 =====
-
-/**
- * 根据URL判断视频平台
- */
-function getPlatformFromUrl(url) {
-    const urlLower = url.toLowerCase();
-    
-    for (const [platform, domains] of Object.entries(CONFIG.SUPPORTED_PLATFORMS)) {
-        for (const domain of domains) {
-            if (urlLower.includes(domain)) {
-                return platform;
-            }
-        }
-    }
-    
-    return null;
-}
 
 /**
  * 发送HTTP请求
  */
 async function makeRequest(url, options = {}) {
-    const defaultHeaders = {
-        'User-Agent': CONFIG.USER_AGENTS[0],
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3',
-        'Accept-Encoding': 'gzip, deflate',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        ...options.headers
-    };
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
     
-    for (let attempt = 0; attempt < CONFIG.MAX_RETRIES; attempt++) {
-        try {
-            // 创建手动超时控制（替代AbortSignal.timeout）
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT);
-            
-            const response = await fetch(url, {
-                method: options.method || 'GET',
-                headers: defaultHeaders,
-                redirect: options.redirect || 'follow',
-                signal: controller.signal
-            });
-            
-            clearTimeout(timeoutId);
-            
-            // 对于重定向状态码，不抛出错误
-            if (!response.ok && !(response.status >= 300 && response.status < 400)) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            
-            return response;
-        } catch (error) {
-            if (attempt === CONFIG.MAX_RETRIES - 1) {
-                throw error;
-            }
-            // 等待一段时间后重试
-            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-        }
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return response;
+    } catch (error) {
+        clearTimeout(timeoutId);
+        throw error;
     }
 }
 
-// ===== 视频解析器类 =====
+// ===== 抖音解析器 =====
 
 /**
- * 抖音视频解析器
+ * 抖音视频解析器 - 仅使用最新算法
  */
 class DouyinParser {
     constructor() {
-        this.platformName = "抖音";
+        this.platformName = 'douyin';
     }
     
-    async parse(url) {
-        console.log('🎬 抖音解析器开始处理URL:', url);
-        
-        try {
-            // 获取真实链接（处理短链接重定向）
-            console.log('📡 发送请求获取真实链接...');
-            const response = await makeRequest(url, { redirect: 'manual' });
-            console.log('📡 请求响应状态:', response.status);
-            
-            // 检查是否有重定向
-            let realUrl = url;
-            if (response.status >= 300 && response.status < 400) {
-                realUrl = response.headers.get('Location') || url;
-                console.log('🔄 发现重定向，真实URL:', realUrl);
-            } else {
-                console.log('✅ 无重定向，使用原始URL');
-            }
-            
-            // 提取视频ID
-            const videoId = this.extractVideoId(realUrl);
-            if (!videoId) {
-                // 如果从重定向URL无法提取，尝试从原始URL提取
-                console.log('❌ 从原始URL无法提取视频ID，尝试原始URL');
-                const originalVideoId = this.extractVideoId(url);
-                if (!originalVideoId) {
-                    throw new Error(`无法提取视频ID。原始URL: ${url}, 重定向URL: ${realUrl}`);
-                }
-                console.log('✅ 从原始URL提取到视频ID:', originalVideoId);
-                return await this.createFallbackResult(originalVideoId);
-            }
-            
-            console.log('✅ 成功提取视频ID:', videoId);
-            
-            // 尝试访问抖音页面获取数据
-            try {
-                console.log('📄 尝试获取页面内容...');
-                const pageResponse = await makeRequest(realUrl, {
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                        'Accept-Encoding': 'gzip, deflate',
-                        'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1'
-                    }
-                });
-                
-                const htmlContent = await pageResponse.text();
-                console.log('📄 页面内容长度:', htmlContent.length);
-                
-                // 从页面HTML中提取视频数据
-                const videoData = this.extractVideoDataFromHtml(htmlContent, videoId);
-                
-                if (!videoData.downloadUrl) {
-                    console.log('⚠️ 无法获取下载链接，返回备用结果');
-                    return await this.createFallbackResult(videoId);
-                }
-                
-                console.log('✅ 成功解析视频数据');
-                return {
-                    success: true,
-                    title: videoData.title || '抖音视频',
-                    download_url: videoData.downloadUrl,
-                    platform: this.platformName,
-                    video_id: videoId,
-                    author: videoData.author || '',
-                    duration: videoData.duration || 0,
-                    size: '未知',
-                    filename: `douyin_${videoId}.mp4`
-                };
-                
-            } catch (pageError) {
-                console.log('⚠️ 页面访问失败，返回备用结果:', pageError.message);
-                return await this.createFallbackResult(videoId);
-            }
-            
-        } catch (error) {
-            throw new Error(`抖音视频解析失败: ${error.message}`);
-        }
-    }
-    
-    extractVideoDataFromHtml(html, videoId) {
-        try {
-            // 查找页面中的JSON数据
-            const jsonRegex = /<script[^>]*>window\._SSR_HYDRATED_DATA\s*=\s*({.*?})<\/script>/s;
-            const match = html.match(jsonRegex);
-            
-            if (!match || !match[1]) {
-                // 尝试其他数据提取方式
-                const altRegex = /window\.videoInfo\s*=\s*({.*?});/s;
-                const altMatch = html.match(altRegex);
-                
-                if (!altMatch || !altMatch[1]) {
-                    throw new Error("无法从页面中找到视频数据");
-                }
-                
-                const data = JSON.parse(altMatch[1]);
-                return this.parseVideoInfo(data);
-            }
-            
-            const ssrData = JSON.parse(match[1]);
-            
-            // 从SSR数据中提取视频信息
-            if (ssrData.app && ssrData.app.videoDetail) {
-                const videoDetail = ssrData.app.videoDetail;
-                return this.parseVideoInfo(videoDetail);
-            }
-            
-            throw new Error("页面数据格式不符合预期");
-            
-        } catch (error) {
-            console.error('解析HTML失败:', error.message);
-            
-            // 备用方案：尝试构造直接下载链接
-            console.log('使用备用方案构造下载链接');
-            return {
-                title: '抖音视频',
-                downloadUrl: null, // 无法获取真实下载链接时返回null
-                author: '',
-                duration: 0
-            };
-        }
-    }
-    
-    parseVideoInfo(data) {
-        let downloadUrl = null;
-        let title = '抖音视频';
-        let author = '';
-        let duration = 0;
-        
-        // 尝试提取下载链接
-        if (data.video && data.video.playAddr) {
-            downloadUrl = data.video.playAddr[0] || data.video.playAddr;
-        } else if (data.video && data.video.play_addr && data.video.play_addr.url_list) {
-            downloadUrl = data.video.play_addr.url_list[0];
-        }
-        
-        // 提取标题
-        if (data.desc) {
-            title = data.desc;
-        }
-        
-        // 提取作者
-        if (data.author && data.author.nickname) {
-            author = data.author.nickname;
-        }
-        
-        // 提取时长
-        if (data.video && data.video.duration) {
-            duration = Math.round(data.video.duration / 1000);
-        }
-        
-        // 如果没有找到下载链接，使用页面链接
-        if (!downloadUrl) {
-            downloadUrl = data.video ? (data.video.playAddr || data.video.play_addr) : null;
-        }
-        
-        return {
-            downloadUrl,
-            title,
-            author,
-            duration
-        };
-    }
-    
+    /**
+     * 从URL中提取视频ID
+     */
     extractVideoId(url) {
-        console.log('正在提取视频ID from URL:', url);
+        console.log('🔍 [步骤1] 开始提取视频ID:', url);
         
         const patterns = [
-            // 抖音视频ID模式
-            /\/video\/(\d+)/,
-            /item_ids=(\d+)/,
-            /\/(\d+)\/?$/,
-            // 新增更多抖音URL模式
-            /aweme\/detail\/(\d+)/,
-            /share\/video\/(\d+)/,
-            /v\.douyin\.com\/[A-Za-z0-9]+.*?video\/(\d+)/,
-            // 短链接重定向后的模式
-            /douyin\.com.*?\/(\d{19})/,  // 抖音视频ID通常是19位
-            /douyin\.com.*?video_id=(\d+)/
+            /video\/(\d+)/,                    // 标准格式: /video/123456
+            /modal_id=(\d+)/,                   // 发现页格式: modal_id=123456
+            /share\/video\/(\d+)/,              // 分享格式: /share/video/123456
+            /\/v\/(\w+)/,                       // 短链接格式: /v/abc123
+            /(\d{19})/                          // 纯数字ID格式
         ];
+        
+        console.log('🔍 [步骤1.1] 尝试匹配URL模式，共', patterns.length, '种模式');
         
         for (let i = 0; i < patterns.length; i++) {
             const pattern = patterns[i];
+            console.log(`🔍 [步骤1.${i+2}] 尝试模式 ${i+1}:`, pattern.toString());
+            
             const match = url.match(pattern);
-            console.log(`模式 ${i + 1} (${pattern}):`, match ? `匹配到 ${match[1]}` : '未匹配');
             if (match && match[1]) {
-                console.log('✅ 成功提取视频ID:', match[1]);
+                console.log('✅ [步骤1] 成功提取视频ID:', match[1], '(使用模式', i+1, ')');
                 return match[1];
+            } else {
+                console.log(`❌ [步骤1.${i+2}] 模式 ${i+1} 匹配失败`);
             }
         }
         
-        console.log('❌ 未能提取到视频ID');
+        console.log('❌ [步骤1] 所有模式都无法提取视频ID');
         return null;
     }
     
     /**
-     * 创建备用解析结果（当无法获取详细信息时）
-     * @param {string} videoId - 视频ID
-     * @returns {Promise<Object>} 备用结果对象
+     * 检查链接是否为真实的视频文件
      */
-    async createFallbackResult(videoId) {
-        console.log('📋 创建备用解析结果:', videoId);
+    isRealVideoFile(url) {
+        console.log('🎬 [检查] 验证是否为真实视频文件:', url?.substring(0, 80) + '...');
         
-        // 尝试获取真实视频下载链接
-        const realDownloadUrl = await this.generateRealDownloadUrl(videoId);
-        
-        if (realDownloadUrl) {
-            console.log('✅ 备用方案成功获取视频链接');
-            return {
-                success: true,
-                title: `抖音视频_${videoId}`,
-                download_url: realDownloadUrl,
-                platform: this.platformName,
-                video_id: videoId,
-                author: '未知作者',
-                duration: 0,
-                size: '未知',
-                filename: `douyin_${videoId}.mp4`,
-                note: '已获取无水印视频链接'
-            };
-        } else {
-            console.log('❌ 备用方案也无法获取视频链接');
-            return {
-                success: false,
-                message: '抱歉，暂时无法解析此抖音视频。可能原因：1. 视频为私密或已删除 2. 网络问题 3. 抖音接口限制。请稍后重试或使用其他视频。',
-                platform: this.platformName,
-                video_id: videoId
-            };
+        if (!url) {
+            console.log('❌ [检查] URL为空');
+            return false;
         }
+        
+        // 检查是否包含视频文件特征
+        const videoIndicators = ['.mp4', 'video', 'play'];
+        console.log('🔍 [检查] 寻找视频特征:', videoIndicators);
+        
+        const hasVideoIndicator = videoIndicators.some(indicator => {
+            const found = url.toLowerCase().includes(indicator);
+            console.log(`🔍 [检查] 特征 "${indicator}":`, found ? '✅找到' : '❌未找到');
+            return found;
+        });
+        
+        // 排除明显的页面链接
+        const pageIndicators = ['douyin.com/video/', '/share/', 'web/api'];
+        console.log('🔍 [检查] 排除页面链接特征:', pageIndicators);
+        
+        const isPageLink = pageIndicators.some(indicator => {
+            const found = url.includes(indicator);
+            console.log(`🔍 [检查] 页面特征 "${indicator}":`, found ? '❌找到(排除)' : '✅未找到');
+            return found;
+        });
+        
+        const isRealFile = hasVideoIndicator && !isPageLink;
+        console.log('🎬 [检查] 最终结果:', {
+            hasVideoIndicator: hasVideoIndicator ? '✅有视频特征' : '❌无视频特征',
+            isPageLink: isPageLink ? '❌是页面链接' : '✅不是页面链接',
+            finalResult: isRealFile ? '✅真实视频文件' : '❌非视频文件'
+        });
+        
+        return isRealFile;
     }
     
     /**
-     * 异步获取真实视频下载链接
-     * @param {string} videoId - 视频ID
-     * @returns {Promise<string>} 可下载的视频链接
+     * 主解析方法 - 使用最新算法（腾讯云文章方法）
      */
-    async generateRealDownloadUrl(videoId) {
-        console.log('🎯 开始获取真实视频下载链接:', videoId);
-        
-        // 方案1: 通过官方API获取真实视频链接
-        try {
-            const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${videoId}&dytk=`;
-            console.log('📡 调用抖音API:', apiUrl);
-            
-            const response = await makeRequest(apiUrl, {
-                headers: {
-                    'Referer': 'https://www.douyin.com/',
-                    'User-Agent': CONFIG.USER_AGENTS[0],
-                    'Accept': 'application/json, text/plain, */*',
-                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            });
-            
-            const data = await response.json();
-            console.log('📦 API响应状态:', response.status);
-            
-            if (data.item_list && data.item_list[0]) {
-                const item = data.item_list[0];
-                console.log('🎬 视频项结构:', Object.keys(item.video || {}));
-                
-                // 多种方式尝试获取真实的MP4视频链接
-                let realVideoUrl = null;
-                
-                // 尝试从不同的数据结构中获取视频链接
-                if (item.video?.play_addr?.url_list && item.video.play_addr.url_list.length > 0) {
-                    // 获取最高质量的视频链接
-                    const urlList = item.video.play_addr.url_list;
-                    realVideoUrl = urlList[urlList.length - 1]; // 通常最后一个是最高质量
-                    console.log('✅ 从play_addr获取视频链接');
-                } else if (item.video?.download_addr?.url_list && item.video.download_addr.url_list.length > 0) {
-                    const urlList = item.video.download_addr.url_list;
-                    realVideoUrl = urlList[urlList.length - 1];
-                    console.log('✅ 从download_addr获取视频链接');
-                }
-                
-                if (realVideoUrl) {
-                    // 确保获取到的是真实的MP4链接而不是API接口
-                    if (realVideoUrl.includes('.mp4') || realVideoUrl.includes('video')) {
-                        // 处理链接，去水印并优化
-                        realVideoUrl = realVideoUrl
-                            .replace('playwm', 'play')  // 去水印
-                            .replace(/watermark=1/, 'watermark=0')  // 去水印参数
-                            .replace(/&line=\d+/, '&line=0'); // 使用最佳线路
-                        
-                        console.log('🎯 获取到真实MP4链接:', realVideoUrl);
-                        return realVideoUrl;
-                    } else {
-                        console.log('⚠️ 获取的链接不是MP4文件:', realVideoUrl);
-                    }
-                }
-            }
-            
-            console.log('❌ API未返回有效的视频链接');
-        } catch (error) {
-            console.log('❌ API调用失败:', error.message);
-        }
-        
-        // 方案2: 尝试通过移动端API获取
-        try {
-            console.log('🔄 尝试移动端API...');
-            const mobileApiUrl = `https://aweme.snssdk.com/aweme/v1/aweme/detail/?aweme_id=${videoId}`;
-            
-            const mobileResponse = await makeRequest(mobileApiUrl, {
-                headers: {
-                    'User-Agent': 'com.ss.android.ugc.aweme/110101 (Linux; U; Android 5.1.1; zh_CN; MI 9; Build/NMF26X; Cronet/TTNetVersion:b4d74d15 2020-04-23 QuicVersion:0144c772 2020-03-24)',
-                    'Accept-Encoding': 'gzip, deflate'
-                }
-            });
-            
-            const mobileData = await mobileResponse.json();
-            
-            if (mobileData.aweme_list && mobileData.aweme_list[0]) {
-                const aweme = mobileData.aweme_list[0];
-                if (aweme.video?.play_addr?.url_list) {
-                    const videoUrl = aweme.video.play_addr.url_list[0]
-                        .replace('playwm', 'play')
-                        .replace(/watermark=1/, 'watermark=0');
-                    
-                    if (videoUrl.includes('.mp4') || videoUrl.includes('video')) {
-                        console.log('✅ 移动端API获取成功:', videoUrl);
-                        return videoUrl;
-                    }
-                }
-            }
-        } catch (error) {
-            console.log('❌ 移动端API失败:', error.message);
-        }
-        
-        // 方案3: 解析失败时返回明确的错误
-        console.log('⚠️ 所有方案都无法获取真实的MP4视频链接');
-        return null;
-    }
-    
-    /**
-     * 使用最新算法解析抖音视频（基于腾讯云文章方法）
-     * @param {string} url - 视频URL
-     * @returns {Object} 解析结果
-     */
-    async parseWithLatestAlgorithm(url) {
-        console.log('🔥 使用最新算法解析抖音视频:', url);
+    async parse(url) {
+        console.log('🔥 [算法] 使用最新算法解析抖音视频:', url);
         
         try {
             // 步骤1: 提取视频ID
+            console.log('📋 [步骤2] 开始提取视频ID...');
             const videoId = this.extractVideoId(url);
             if (!videoId) {
+                console.error('❌ [步骤2] 视频ID提取失败');
                 throw new Error('无法提取视频ID');
             }
-            
-            console.log('📋 提取到视频ID:', videoId);
+            console.log('✅ [步骤2] 成功提取到视频ID:', videoId);
             
             // 步骤2: 构造分享页面URL
+            console.log('🔗 [步骤3] 开始构造分享页面URL...');
             const shareUrl = `https://www.iesdouyin.com/share/video/${videoId}`;
-            console.log('🔗 构造分享URL:', shareUrl);
+            console.log('✅ [步骤3] 构造分享URL成功:', shareUrl);
             
-            // 步骤3: 使用iPhone User-Agent访问页面
+            // 步骤3: 准备请求头（使用iPhone User-Agent）
+            console.log('📱 [步骤4] 准备iPhone模拟请求头...');
             const headers = {
                 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/121.0.2277.107 Version/17.0 Mobile/15E148 Safari/604.1',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -472,66 +142,131 @@ class DouyinParser {
                 'Referer': 'https://www.douyin.com/',
                 'Connection': 'keep-alive'
             };
+            console.log('✅ [步骤4] 请求头准备完成，User-Agent:', headers['User-Agent'].substring(0, 50) + '...');
             
+            // 步骤4: 发送请求获取页面内容
+            console.log('🌐 [步骤5] 开始请求分享页面...');
             const response = await makeRequest(shareUrl, { headers });
+            console.log('📡 [步骤5] 收到响应，状态码:', response.status);
+            
             if (!response.ok) {
+                console.error('❌ [步骤5] 页面请求失败，状态码:', response.status);
                 throw new Error(`页面请求失败: ${response.status}`);
             }
+            console.log('✅ [步骤5] 页面请求成功');
             
+            // 步骤5: 获取HTML内容
+            console.log('📄 [步骤6] 开始读取HTML内容...');
             const htmlContent = await response.text();
-            console.log('📄 成功获取页面内容，长度:', htmlContent.length);
+            console.log('✅ [步骤6] HTML内容获取成功，长度:', htmlContent.length, '字符');
+            console.log('🔍 [步骤6] HTML前100字符:', htmlContent.substring(0, 100));
             
-            // 步骤4: 使用正则表达式提取 window._ROUTER_DATA
+            // 步骤6: 使用正则表达式提取 window._ROUTER_DATA
+            console.log('🎯 [步骤7] 开始提取window._ROUTER_DATA...');
             const pattern = /window\._ROUTER_DATA\s*=\s*(.*?)<\/script>/s;
-            const match = pattern.exec(htmlContent);
+            console.log('🔍 [步骤7] 使用正则表达式:', pattern.toString());
             
-            if (!match || !match[1]) {
+            const match = pattern.exec(htmlContent);
+            if (!match) {
+                console.error('❌ [步骤7] 正则表达式匹配失败');
+                console.log('🔍 [步骤7] HTML中是否包含_ROUTER_DATA:', htmlContent.includes('_ROUTER_DATA'));
                 throw new Error('未找到 window._ROUTER_DATA 数据');
             }
             
-            console.log('🎯 成功匹配到路由数据');
+            if (!match[1]) {
+                console.error('❌ [步骤7] 匹配到_ROUTER_DATA但内容为空');
+                throw new Error('_ROUTER_DATA 内容为空');
+            }
             
-            // 步骤5: 解析JSON数据
+            console.log('✅ [步骤7] 成功匹配到路由数据');
+            console.log('📊 [步骤7] 提取到的JSON长度:', match[1].length, '字符');
+            console.log('🔍 [步骤7] JSON前200字符:', match[1].substring(0, 200));
+            
+            // 步骤7: 解析JSON数据
+            console.log('📊 [步骤8] 开始解析JSON数据...');
             const jsonStr = match[1].trim();
             let jsonData;
             
             try {
                 jsonData = JSON.parse(jsonStr);
+                console.log('✅ [步骤8] JSON解析成功');
+                console.log('🔍 [步骤8] JSON根键:', Object.keys(jsonData));
             } catch (parseError) {
-                console.error('JSON解析失败:', parseError);
-                throw new Error('JSON数据解析失败');
+                console.error('❌ [步骤8] JSON解析失败:', parseError);
+                console.log('🔍 [步骤8] 尝试解析的JSON前500字符:', jsonStr.substring(0, 500));
+                throw new Error('JSON数据解析失败: ' + parseError.message);
             }
             
-            console.log('✅ JSON解析成功');
-            
-            // 步骤6: 从特定路径提取视频信息
+            // 步骤8: 从特定路径提取视频信息
+            console.log('🎬 [步骤9] 开始从JSON中提取视频信息...');
             const videoPath = `video_(${videoId})/page`;
+            console.log('🔍 [步骤9] 查找路径:', videoPath);
+            
+            console.log('🔍 [步骤9] loaderData键:', jsonData?.loaderData ? Object.keys(jsonData.loaderData) : '不存在');
+            
             const loaderData = jsonData?.loaderData?.[videoPath]?.videoInfoRes?.item_list?.[0];
             
             if (!loaderData) {
-                throw new Error('未找到视频详细信息');
+                console.error('❌ [步骤9] 未找到视频详细信息');
+                console.log('🔍 [步骤9] 尝试查找其他可能的路径...');
+                
+                // 尝试其他可能的路径
+                const alternativePaths = [
+                    `video_${videoId}/page`,
+                    `video/${videoId}`,
+                    'default'
+                ];
+                
+                for (const altPath of alternativePaths) {
+                    console.log(`🔍 [步骤9] 尝试路径: ${altPath}`);
+                    const altData = jsonData?.loaderData?.[altPath]?.videoInfoRes?.item_list?.[0];
+                    if (altData) {
+                        console.log('✅ [步骤9] 在备用路径找到数据:', altPath);
+                        break;
+                    }
+                }
+                
+                throw new Error('未找到视频详细信息，可能是视频路径格式变更');
             }
             
-            console.log('🎬 成功提取视频数据');
+            console.log('✅ [步骤9] 成功提取视频数据');
+            console.log('🔍 [步骤9] 视频数据键:', Object.keys(loaderData));
             
-            // 步骤7: 获取视频播放地址并去水印
+            // 步骤9: 获取视频播放地址并去水印
+            console.log('🎭 [步骤10] 开始获取视频播放地址...');
+            
+            console.log('🔍 [步骤10] video键:', loaderData?.video ? Object.keys(loaderData.video) : '不存在');
+            console.log('🔍 [步骤10] play_addr键:', loaderData?.video?.play_addr ? Object.keys(loaderData.video.play_addr) : '不存在');
+            
             const playAddr = loaderData?.video?.play_addr?.url_list?.[0];
             if (!playAddr) {
+                console.error('❌ [步骤10] 未找到视频播放地址');
+                console.log('🔍 [步骤10] url_list内容:', loaderData?.video?.play_addr?.url_list);
                 throw new Error('未找到视频播放地址');
             }
             
+            console.log('✅ [步骤10] 找到原始播放地址');
+            console.log('🎭 [步骤10] 原始链接:', playAddr);
+            
             // 关键的去水印处理：将"playwm"替换为"play"
+            console.log('✨ [步骤11] 开始去水印处理...');
             const cleanVideoUrl = playAddr.replace('playwm', 'play');
-            console.log('🎭 原始链接:', playAddr);
-            console.log('✨ 去水印链接:', cleanVideoUrl);
+            console.log('✅ [步骤11] 去水印处理完成');
+            console.log('🎭 [步骤11] 原始链接:', playAddr);
+            console.log('✨ [步骤11] 去水印链接:', cleanVideoUrl);
+            console.log('🔍 [步骤11] 是否进行了替换:', playAddr !== cleanVideoUrl ? '✅是' : '❌否');
             
             // 验证是否为真实视频文件
+            console.log('🎬 [步骤12] 开始验证链接有效性...');
             if (!this.isRealVideoFile(cleanVideoUrl)) {
+                console.error('❌ [步骤12] 获取的链接不是有效的视频文件');
                 throw new Error('获取的链接不是有效的视频文件');
             }
+            console.log('✅ [步骤12] 链接验证通过，确认为视频文件');
             
-            // 步骤8: 构造返回结果
-            return {
+            // 步骤12: 构造返回结果
+            console.log('📦 [步骤13] 开始构造返回结果...');
+            const result = {
                 success: true,
                 title: loaderData?.desc || '抖音视频',
                 download_url: cleanVideoUrl,
@@ -544,264 +279,37 @@ class DouyinParser {
                 note: '使用最新算法获取的无水印视频'
             };
             
-        } catch (error) {
-            console.error('❌ 最新算法解析失败:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * 使用第三方API解析服务
-     * @param {string} url - 视频URL
-     * @returns {Object} 解析结果
-     */
-    async parseWithThirdPartyAPI(url) {
-        console.log('🌐 使用第三方API解析抖音视频:', url);
-        
-        try {
-            // 使用开源第三方API服务
-            const apiUrl = `https://api.douyin.wtf/api/hybrid/video_data?url=${encodeURIComponent(url)}&minimal=false`;
-            console.log('📡 调用第三方API:', apiUrl);
-            
-            const response = await makeRequest(apiUrl, {
-                headers: {
-                    'User-Agent': CONFIG.USER_AGENTS[0],
-                    'Accept': 'application/json',
-                    'Referer': 'https://www.douyin.com'
-                }
+            console.log('✅ [步骤13] 结果构造完成');
+            console.log('🎉 [成功] 解析成功！结果:', {
+                success: result.success,
+                title: result.title,
+                author: result.author,
+                videoId: result.video_id,
+                downloadUrl: result.download_url.substring(0, 100) + '...'
             });
             
-            if (!response.ok) {
-                throw new Error(`第三方API请求失败: ${response.status}`);
-            }
-            
-            const data = await response.json();
-            console.log('🎯 第三方API返回数据:', JSON.stringify(data, null, 2));
-            
-            if (data && data.status === 'success' && data.data) {
-                const videoData = data.data;
-                
-                // 提取视频下载链接
-                let downloadUrl = null;
-                
-                // 尝试多种方式获取无水印视频链接
-                if (videoData.video_data && videoData.video_data.nwm_video_url_HQ) {
-                    downloadUrl = videoData.video_data.nwm_video_url_HQ;
-                } else if (videoData.video_data && videoData.video_data.nwm_video_url) {
-                    downloadUrl = videoData.video_data.nwm_video_url;
-                } else if (videoData.nwm_video_url_HQ) {
-                    downloadUrl = videoData.nwm_video_url_HQ;
-                } else if (videoData.nwm_video_url) {
-                    downloadUrl = videoData.nwm_video_url;
-                }
-                
-                console.log('🎬 提取到的下载链接:', downloadUrl);
-                
-                // 验证是否为真实视频文件链接
-                if (downloadUrl && this.isRealVideoFile(downloadUrl)) {
-                    console.log('✅ 第三方API成功获取真实视频链接');
-                    return {
-                        success: true,
-                        title: videoData.desc || videoData.video_data?.desc || '抖音视频',
-                        download_url: downloadUrl,
-                        platform: this.platformName,
-                        video_id: videoData.aweme_id || videoData.video_data?.aweme_id || 'unknown',
-                        author: videoData.author?.nickname || videoData.video_data?.author?.nickname || '未知作者',
-                        duration: videoData.duration || videoData.video_data?.duration || 0,
-                        size: '未知',
-                        filename: `douyin_${Date.now()}.mp4`,
-                        note: '通过第三方API获取的无水印视频'
-                    };
-                }
-            }
-            
-            throw new Error('第三方API未返回有效的视频链接');
+            return result;
             
         } catch (error) {
-            console.error('❌ 第三方API解析失败:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * 增强版解析方法 - 尝试多种解析策略
-     * @param {string} url - 视频URL
-     * @returns {Object} 解析结果
-     */
-    async parseWithMultipleStrategies(url) {
-        console.log('🚀 启动多策略解析:', url);
-        
-        const strategies = [
-            () => this.parseWithLatestAlgorithm(url), // 最高优先级：最新算法（腾讯云文章方法）
-            () => this.parseWithThirdPartyAPI(url), // 第三方API备用
-            () => this.parse(url), // 原有解析方法  
-            () => this.parseByAwemeAPI(url), // 抖音官方API方法
-            () => this.parseByWebScraping(url) // 网页抓取方法
-        ];
-        
-        for (let i = 0; i < strategies.length; i++) {
-            try {
-                console.log(`📝 尝试策略 ${i + 1}/${strategies.length}`);
-                const result = await strategies[i]();
-                
-                if (result.success && result.download_url && 
-                    !result.download_url.includes('douyin.com/video/')) {
-                    console.log(`✅ 策略 ${i + 1} 成功，获得有效下载链接`);
-                    return result;
-                }
-            } catch (error) {
-                console.log(`❌ 策略 ${i + 1} 失败:`, error.message);
-            }
-        }
-        
-        // 所有策略都失败，返回基础结果
-        console.log('⚠️ 所有解析策略都失败，使用备用方案');
-        const videoId = this.extractVideoId(url);
-        return this.createFallbackResult(videoId || '未知');
-    }
-    
-    /**
-     * 通过官方API解析视频信息
-     * @param {string} url - 视频URL
-     * @returns {Object} 解析结果
-     */
-    async parseByAwemeAPI(url) {
-        const videoId = this.extractVideoId(url);
-        if (!videoId) {
-            throw new Error('无法从URL中提取视频ID');
-        }
-        
-        const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${videoId}&dytk=`;
-        console.log('📡 调用抖音官方API:', apiUrl);
-        
-        try {
-            const response = await makeRequest(apiUrl, {
-                headers: {
-                    'Referer': 'https://www.douyin.com/',
-                    'User-Agent': CONFIG.USER_AGENTS[1],
-                    'Accept': 'application/json, text/plain, */*',
-                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            });
-            
-            const data = await response.json();
-            console.log('📦 API响应数据结构:', Object.keys(data));
-            
-            if (data.item_list && data.item_list.length > 0) {
-                const item = data.item_list[0];
-                console.log('🎬 视频项数据:', Object.keys(item));
-                
-                // 多种方式尝试获取视频链接
-                let videoUrl = null;
-                let title = item.desc || `抖音视频_${videoId}`;
-                let author = item.author?.nickname || '未知作者';
-                
-                // 方案1: play_addr
-                if (item.video?.play_addr?.url_list && item.video.play_addr.url_list.length > 0) {
-                    videoUrl = item.video.play_addr.url_list[0];
-                    console.log('✅ 从play_addr获取视频链接');
-                }
-                // 方案2: download_addr 
-                else if (item.video?.download_addr?.url_list && item.video.download_addr.url_list.length > 0) {
-                    videoUrl = item.video.download_addr.url_list[0];
-                    console.log('✅ 从download_addr获取视频链接');
-                }
-                // 方案3: bit_rate数组中的链接
-                else if (item.video?.bit_rate && item.video.bit_rate.length > 0) {
-                    const bitRate = item.video.bit_rate.find(br => br.play_addr?.url_list?.length > 0);
-                    if (bitRate) {
-                        videoUrl = bitRate.play_addr.url_list[0];
-                        console.log('✅ 从bit_rate获取视频链接');
-                    }
-                }
-                
-                if (videoUrl) {
-                    // 处理链接，去除水印标记并确保使用高清版本
-                    videoUrl = videoUrl
-                        .replace('playwm', 'play')  // 去水印
-                        .replace(/watermark=1/, 'watermark=0')  // 去水印参数
-                        .replace(/&ratio=\d+p/, '&ratio=720p'); // 确保高清
-                    
-                    console.log('🎯 最终视频下载链接:', videoUrl);
-                    
-                    return {
-                        success: true,
-                        title: title,
-                        download_url: videoUrl,
-                        platform: this.platformName,
-                        video_id: videoId,
-                        author: author,
-                        duration: Math.round((item.video?.duration || 0) / 1000),
-                        size: '未知',
-                        filename: `douyin_${videoId}.mp4`
-                    };
-                }
-            }
-            
-            console.log('❌ API返回数据中未找到视频链接');
-            throw new Error('API返回数据格式异常或无视频链接');
-            
-        } catch (error) {
-            console.error('🚨 API解析详细错误:', error);
-            throw new Error(`API解析失败: ${error.message}`);
-        }
-    }
-    
-    /**
-     * 通过网页抓取解析视频信息 
-     * @param {string} url - 视频URL
-     * @returns {Object} 解析结果
-     */
-    async parseByWebScraping(url) {
-        try {
-            const response = await makeRequest(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1'
-                }
-            });
-            
-            const html = await response.text();
-            
-            // 查找移动端视频链接
-            const mobileVideoRegex = /"video_url":"([^"]+)"/;
-            const match = html.match(mobileVideoRegex);
-            
-            if (match && match[1]) {
-                const videoUrl = match[1].replace(/\\u0026/g, '&').replace(/\\/g, '');
-                const videoId = this.extractVideoId(url);
-                
-                return {
-                    success: true,
-                    title: `抖音视频_${videoId}`,
-                    download_url: videoUrl,
-                    platform: this.platformName,
-                    video_id: videoId,
-                    author: '未知作者',
-                    duration: 0,
-                    size: '未知',
-                    filename: `douyin_${videoId}.mp4`
-                };
-            }
-            
-            throw new Error('未在页面中找到视频链接');
-            
-        } catch (error) {
-            throw new Error(`网页抓取失败: ${error.message}`);
+            console.error('❌ [算法] 最新算法解析失败:', error.message);
+            console.error('❌ [算法] 错误堆栈:', error.stack);
+            return {
+                success: false,
+                message: `解析失败: ${error.message}`,
+                platform: this.platformName
+            };
         }
     }
 }
 
-/**
- * 通用解析器（用于其他平台的基础解析）
- */
+// ===== 其他平台解析器（简化版） =====
+
 class GenericParser {
     constructor(platform) {
         this.platformName = platform;
     }
     
     async parse(url) {
-        // 返回一个基础响应，表示暂未实现该平台的详细解析
         return {
             success: false,
             message: `${this.platformName}平台解析功能正在开发中，敬请期待`
@@ -809,9 +317,8 @@ class GenericParser {
     }
 }
 
-/**
- * 获取解析器
- */
+// ===== 解析器工厂 =====
+
 function getParser(platform) {
     switch (platform) {
         case 'douyin':
@@ -829,186 +336,131 @@ function getParser(platform) {
     }
 }
 
+// ===== 平台检测 =====
+
+function getPlatformFromUrl(url) {
+    const urlLower = url.toLowerCase();
+    
+    if (urlLower.includes('douyin.com') || urlLower.includes('iesdouyin.com')) {
+        return 'douyin';
+    } else if (urlLower.includes('kuaishou.com')) {
+        return 'kuaishou';
+    } else if (urlLower.includes('xiaohongshu.com') || urlLower.includes('xhslink.com')) {
+        return 'xiaohongshu';
+    } else if (urlLower.includes('bilibili.com')) {
+        return 'bilibili';
+    } else if (urlLower.includes('weishi.qq.com')) {
+        return 'weishi';
+    }
+    
+    return null;
+}
+
 // ===== Netlify Functions 入口点 =====
 
-/**
- * Netlify Functions 处理器
- */
 exports.handler = async (event, context) => {
+    console.log('🚀 [启动] 视频解析器启动');
+    console.log('🔧 [请求] 方法:', event.httpMethod);
+    console.log('🌐 [请求] 路径:', event.path);
+    
     // 设置CORS头
     const headers = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Content-Type': 'application/json'
     };
     
+    // 处理OPTIONS预检请求
+    if (event.httpMethod === 'OPTIONS') {
+        console.log('✅ [CORS] 处理OPTIONS预检请求');
+        return {
+            statusCode: 200,
+            headers,
+            body: ''
+        };
+    }
+    
     try {
-        // 处理预检请求
-        if (event.httpMethod === 'OPTIONS') {
-            return {
-                statusCode: 200,
-                headers,
-                body: JSON.stringify({ message: 'CORS preflight' })
-            };
+        let url;
+        
+        // 解析请求参数
+        if (event.httpMethod === 'GET') {
+            url = event.queryStringParameters?.url;
+            console.log('📥 [GET] 接收到URL参数:', url);
+        } else if (event.httpMethod === 'POST') {
+            const body = JSON.parse(event.body || '{}');
+            url = body.url;
+            console.log('📥 [POST] 接收到URL参数:', url);
         }
         
-        // 只接受POST请求
-        if (event.httpMethod !== 'POST') {
-            return {
-                statusCode: 405,
-                headers,
-                body: JSON.stringify({
-                    success: false,
-                    message: '只支持POST请求'
-                })
-            };
-        }
-        
-        // 解析请求体
-        let requestData;
-        try {
-            console.log('收到请求 - Method:', event.httpMethod);
-            console.log('收到请求 - Body类型:', typeof event.body);
-            console.log('收到请求 - Body内容:', event.body);
-            
-            requestData = typeof event.body === 'string' 
-                ? JSON.parse(event.body) 
-                : event.body || {};
-                
-            console.log('解析后的请求数据:', JSON.stringify(requestData, null, 2));
-        } catch (error) {
-            console.error('JSON解析错误:', error.message);
-            console.error('原始Body:', event.body);
+        // 验证URL参数
+        if (!url) {
+            console.error('❌ [参数] URL参数为空');
             return {
                 statusCode: 400,
                 headers,
                 body: JSON.stringify({
                     success: false,
-                    message: '请求数据格式错误: ' + error.message
+                    message: '缺少必要的URL参数'
                 })
             };
         }
         
-        // 获取视频URL
-        const videoUrl = (requestData.url || '').trim();
-        console.log('提取的视频URL:', videoUrl);
+        console.log('🔍 [解析] 开始解析URL:', url);
         
-        if (!videoUrl) {
-            console.error('视频URL为空');
-            return {
-                statusCode: 400,
-                headers,
-                body: JSON.stringify({
-                    success: false,
-                    message: '请提供视频链接'
-                })
-            };
-        }
-        
-        // 判断平台
-        const platform = getPlatformFromUrl(videoUrl);
-        console.log('检测到的平台:', platform);
+        // 检测平台
+        const platform = getPlatformFromUrl(url);
+        console.log('🎯 [平台] 检测到平台:', platform || '未知');
         
         if (!platform) {
-            console.error('不支持的平台URL:', videoUrl);
+            console.error('❌ [平台] 不支持的平台');
             return {
                 statusCode: 400,
                 headers,
                 body: JSON.stringify({
                     success: false,
-                    message: `不支持此平台，目前支持抖音、快手、小红书等平台。输入的URL: ${videoUrl}`
+                    message: '不支持的视频平台，目前仅支持抖音、快手、小红书、哔哩哔哩、微视'
                 })
             };
         }
         
-        // 获取解析器
+        // 获取对应的解析器
         const parser = getParser(platform);
-        console.log('获取解析器:', platform, parser ? '成功' : '失败');
-        
         if (!parser) {
-            console.error('解析器未找到:', platform);
+            console.error('❌ [解析器] 无法获取解析器');
             return {
                 statusCode: 500,
                 headers,
                 body: JSON.stringify({
                     success: false,
-                    message: `${platform}解析器暂未实现`
+                    message: '解析器初始化失败'
                 })
             };
         }
+        
+        console.log('🔧 [解析器] 解析器创建成功，开始解析...');
         
         // 执行解析
-        try {
-            console.log('开始解析视频:', {
-                platform: platform,
-                url: videoUrl
-            });
-            
-            // 如果是抖音平台，使用增强版多策略解析
-            let result;
-            if (platform === 'douyin' && parser.parseWithMultipleStrategies) {
-                console.log('🚀 使用抖音增强版多策略解析');
-                result = await parser.parseWithMultipleStrategies(videoUrl);
-            } else {
-                console.log('📝 使用标准解析方法');
-                result = await parser.parse(videoUrl);
-            }
-            
-            console.log('解析结果:', JSON.stringify(result, null, 2));
-            
-            // 确保返回结果包含必要字段
-            if (!result.success && !result.message) {
-                result.success = false;
-                result.message = '解析失败，请稍后重试';
-            }
-            
-            return {
-                statusCode: 200,
-                headers,
-                body: JSON.stringify(result)
-            };
-            
-        } catch (parseError) {
-            console.error('解析错误详情:', {
-                message: parseError.message,
-                stack: parseError.stack,
-                url: videoUrl,
-                platform: platform
-            });
-            
-            return {
-                statusCode: 400,
-                headers,
-                body: JSON.stringify({
-                    success: false,
-                    message: parseError.message || '解析过程中发生错误',
-                    debug: {
-                        platform: platform,
-                        url: videoUrl,
-                        error: parseError.message
-                    }
-                })
-            };
-        }
+        const result = await parser.parse(url);
+        
+        console.log('🎯 [结果] 解析完成，成功:', result.success);
+        
+        return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify(result)
+        };
         
     } catch (error) {
-        // 记录错误详情
-        console.error('函数执行错误:', {
-            message: error.message,
-            stack: error.stack,
-            url: videoUrl || 'unknown',
-            method: event.httpMethod,
-            body: event.body
-        });
-        
+        console.error('❌ [系统] 系统错误:', error);
         return {
             statusCode: 500,
             headers,
             body: JSON.stringify({
                 success: false,
                 message: '服务器内部错误，请稍后重试',
-                debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+                error: error.message
             })
         };
     }
