@@ -1,3 +1,5 @@
+const fetch = require('node-fetch');
+
 /**
  * 视频下载器 - Netlify Functions (JavaScript版本)
  * 负责解析各大视频平台的分享链接，提取无水印的原始视频下载地址
