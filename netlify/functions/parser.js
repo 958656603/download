@@ -108,54 +108,80 @@ class DouyinParser {
     }
     
     async parse(url) {
+        console.log('🎬 抖音解析器开始处理URL:', url);
+        
         try {
             // 获取真实链接（处理短链接重定向）
+            console.log('📡 发送请求获取真实链接...');
             const response = await makeRequest(url, { redirect: 'manual' });
+            console.log('📡 请求响应状态:', response.status);
             
             // 检查是否有重定向
             let realUrl = url;
             if (response.status >= 300 && response.status < 400) {
                 realUrl = response.headers.get('Location') || url;
+                console.log('🔄 发现重定向，真实URL:', realUrl);
+            } else {
+                console.log('✅ 无重定向，使用原始URL');
             }
             
             // 提取视频ID
             const videoId = this.extractVideoId(realUrl);
             if (!videoId) {
-                throw new Error("无法提取视频ID");
-            }
-            
-            // 直接访问抖音页面获取数据
-            const pageResponse = await makeRequest(realUrl, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1'
+                // 如果从重定向URL无法提取，尝试从原始URL提取
+                console.log('⚠️ 从重定向URL无法提取视频ID，尝试原始URL');
+                const originalVideoId = this.extractVideoId(url);
+                if (!originalVideoId) {
+                    throw new Error(`无法提取视频ID。原始URL: ${url}, 重定向URL: ${realUrl}`);
                 }
-            });
-            
-            const htmlContent = await pageResponse.text();
-            
-            // 从页面HTML中提取视频数据
-            const videoData = this.extractVideoDataFromHtml(htmlContent, videoId);
-            
-            if (!videoData.downloadUrl) {
-                throw new Error("无法从页面中提取视频下载链接");
+                console.log('✅ 从原始URL提取到视频ID:', originalVideoId);
+                return this.createFallbackResult(originalVideoId);
             }
             
-            return {
-                success: true,
-                title: videoData.title || '抖音视频',
-                download_url: videoData.downloadUrl,
-                platform: this.platformName,
-                video_id: videoId,
-                author: videoData.author || '',
-                duration: videoData.duration || 0,
-                size: '未知',
-                filename: `douyin_${videoId}.mp4`
-            };
+            console.log('✅ 成功提取视频ID:', videoId);
+            
+            // 尝试访问抖音页面获取数据
+            try {
+                console.log('📄 尝试获取页面内容...');
+                const pageResponse = await makeRequest(realUrl, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                        'Accept-Encoding': 'gzip, deflate',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1'
+                    }
+                });
+                
+                const htmlContent = await pageResponse.text();
+                console.log('📄 页面内容长度:', htmlContent.length);
+                
+                // 从页面HTML中提取视频数据
+                const videoData = this.extractVideoDataFromHtml(htmlContent, videoId);
+                
+                if (!videoData.downloadUrl) {
+                    console.log('⚠️ 无法获取下载链接，返回备用结果');
+                    return this.createFallbackResult(videoId);
+                }
+                
+                console.log('✅ 成功解析视频数据');
+                return {
+                    success: true,
+                    title: videoData.title || '抖音视频',
+                    download_url: videoData.downloadUrl,
+                    platform: this.platformName,
+                    video_id: videoId,
+                    author: videoData.author || '',
+                    duration: videoData.duration || 0,
+                    size: '未知',
+                    filename: `douyin_${videoId}.mp4`
+                };
+                
+            } catch (pageError) {
+                console.log('⚠️ 页面访问失败，返回备用结果:', pageError.message);
+                return this.createFallbackResult(videoId);
+            }
             
         } catch (error) {
             throw new Error(`抖音视频解析失败: ${error.message}`);
@@ -247,20 +273,55 @@ class DouyinParser {
     }
     
     extractVideoId(url) {
+        console.log('正在提取视频ID from URL:', url);
+        
         const patterns = [
+            // 抖音视频ID模式
             /\/video\/(\d+)/,
             /item_ids=(\d+)/,
-            /\/(\d+)\/?$/
+            /\/(\d+)\/?$/,
+            // 新增更多抖音URL模式
+            /aweme\/detail\/(\d+)/,
+            /share\/video\/(\d+)/,
+            /v\.douyin\.com\/[A-Za-z0-9]+.*?video\/(\d+)/,
+            // 短链接重定向后的模式
+            /douyin\.com.*?\/(\d{19})/,  // 抖音视频ID通常是19位
+            /douyin\.com.*?video_id=(\d+)/
         ];
         
-        for (const pattern of patterns) {
+        for (let i = 0; i < patterns.length; i++) {
+            const pattern = patterns[i];
             const match = url.match(pattern);
-            if (match) {
+            console.log(`模式 ${i + 1} (${pattern}):`, match ? `匹配到 ${match[1]}` : '未匹配');
+            if (match && match[1]) {
+                console.log('✅ 成功提取视频ID:', match[1]);
                 return match[1];
             }
         }
         
+        console.log('❌ 未能提取到视频ID');
         return null;
+    }
+    
+    /**
+     * 创建备用解析结果（当无法获取详细信息时）
+     * @param {string} videoId - 视频ID
+     * @returns {Object} 备用结果对象
+     */
+    createFallbackResult(videoId) {
+        console.log('📋 创建备用解析结果:', videoId);
+        return {
+            success: true,
+            title: `抖音视频_${videoId}`,
+            download_url: `https://www.douyin.com/video/${videoId}`, // 提供原始链接
+            platform: this.platformName,
+            video_id: videoId,
+            author: '未知作者',
+            duration: 0,
+            size: '未知',
+            filename: `douyin_${videoId}.mp4`,
+            note: '由于技术限制，无法获取直接下载链接，请手动访问原始链接下载'
+        };
     }
 }
 
@@ -340,23 +401,34 @@ exports.handler = async (event, context) => {
         // 解析请求体
         let requestData;
         try {
+            console.log('收到请求 - Method:', event.httpMethod);
+            console.log('收到请求 - Body类型:', typeof event.body);
+            console.log('收到请求 - Body内容:', event.body);
+            
             requestData = typeof event.body === 'string' 
                 ? JSON.parse(event.body) 
                 : event.body || {};
+                
+            console.log('解析后的请求数据:', JSON.stringify(requestData, null, 2));
         } catch (error) {
+            console.error('JSON解析错误:', error.message);
+            console.error('原始Body:', event.body);
             return {
                 statusCode: 400,
                 headers,
                 body: JSON.stringify({
                     success: false,
-                    message: '请求数据格式错误'
+                    message: '请求数据格式错误: ' + error.message
                 })
             };
         }
         
         // 获取视频URL
         const videoUrl = (requestData.url || '').trim();
+        console.log('提取的视频URL:', videoUrl);
+        
         if (!videoUrl) {
+            console.error('视频URL为空');
             return {
                 statusCode: 400,
                 headers,
@@ -369,20 +441,26 @@ exports.handler = async (event, context) => {
         
         // 判断平台
         const platform = getPlatformFromUrl(videoUrl);
+        console.log('检测到的平台:', platform);
+        
         if (!platform) {
+            console.error('不支持的平台URL:', videoUrl);
             return {
                 statusCode: 400,
                 headers,
                 body: JSON.stringify({
                     success: false,
-                    message: '不支持此平台，目前支持抖音、快手、小红书等平台'
+                    message: `不支持此平台，目前支持抖音、快手、小红书等平台。输入的URL: ${videoUrl}`
                 })
             };
         }
         
         // 获取解析器
         const parser = getParser(platform);
+        console.log('获取解析器:', platform, parser ? '成功' : '失败');
+        
         if (!parser) {
+            console.error('解析器未找到:', platform);
             return {
                 statusCode: 500,
                 headers,
@@ -395,7 +473,13 @@ exports.handler = async (event, context) => {
         
         // 执行解析
         try {
+            console.log('开始解析视频:', {
+                platform: platform,
+                url: videoUrl
+            });
+            
             const result = await parser.parse(videoUrl);
+            console.log('解析结果:', JSON.stringify(result, null, 2));
             
             // 确保返回结果包含必要字段
             if (!result.success && !result.message) {
@@ -410,13 +494,24 @@ exports.handler = async (event, context) => {
             };
             
         } catch (parseError) {
-            console.error('解析错误详情:', parseError);
+            console.error('解析错误详情:', {
+                message: parseError.message,
+                stack: parseError.stack,
+                url: videoUrl,
+                platform: platform
+            });
+            
             return {
                 statusCode: 400,
                 headers,
                 body: JSON.stringify({
                     success: false,
-                    message: parseError.message || '解析过程中发生错误'
+                    message: parseError.message || '解析过程中发生错误',
+                    debug: {
+                        platform: platform,
+                        url: videoUrl,
+                        error: parseError.message
+                    }
                 })
             };
         }
