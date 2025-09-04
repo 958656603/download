@@ -443,6 +443,79 @@ class DouyinParser {
     }
     
     /**
+     * 使用第三方API解析服务
+     * @param {string} url - 视频URL
+     * @returns {Object} 解析结果
+     */
+    async parseWithThirdPartyAPI(url) {
+        console.log('🌐 使用第三方API解析抖音视频:', url);
+        
+        try {
+            // 使用开源第三方API服务
+            const apiUrl = `https://api.douyin.wtf/api/hybrid/video_data?url=${encodeURIComponent(url)}&minimal=false`;
+            console.log('📡 调用第三方API:', apiUrl);
+            
+            const response = await makeRequest(apiUrl, {
+                headers: {
+                    'User-Agent': CONFIG.USER_AGENTS[0],
+                    'Accept': 'application/json',
+                    'Referer': 'https://www.douyin.com'
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`第三方API请求失败: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log('🎯 第三方API返回数据:', JSON.stringify(data, null, 2));
+            
+            if (data && data.status === 'success' && data.data) {
+                const videoData = data.data;
+                
+                // 提取视频下载链接
+                let downloadUrl = null;
+                
+                // 尝试多种方式获取无水印视频链接
+                if (videoData.video_data && videoData.video_data.nwm_video_url_HQ) {
+                    downloadUrl = videoData.video_data.nwm_video_url_HQ;
+                } else if (videoData.video_data && videoData.video_data.nwm_video_url) {
+                    downloadUrl = videoData.video_data.nwm_video_url;
+                } else if (videoData.nwm_video_url_HQ) {
+                    downloadUrl = videoData.nwm_video_url_HQ;
+                } else if (videoData.nwm_video_url) {
+                    downloadUrl = videoData.nwm_video_url;
+                }
+                
+                console.log('🎬 提取到的下载链接:', downloadUrl);
+                
+                // 验证是否为真实视频文件链接
+                if (downloadUrl && this.isRealVideoFile(downloadUrl)) {
+                    console.log('✅ 第三方API成功获取真实视频链接');
+                    return {
+                        success: true,
+                        title: videoData.desc || videoData.video_data?.desc || '抖音视频',
+                        download_url: downloadUrl,
+                        platform: this.platformName,
+                        video_id: videoData.aweme_id || videoData.video_data?.aweme_id || 'unknown',
+                        author: videoData.author?.nickname || videoData.video_data?.author?.nickname || '未知作者',
+                        duration: videoData.duration || videoData.video_data?.duration || 0,
+                        size: '未知',
+                        filename: `douyin_${Date.now()}.mp4`,
+                        note: '通过第三方API获取的无水印视频'
+                    };
+                }
+            }
+            
+            throw new Error('第三方API未返回有效的视频链接');
+            
+        } catch (error) {
+            console.error('❌ 第三方API解析失败:', error);
+            throw error;
+        }
+    }
+
+    /**
      * 增强版解析方法 - 尝试多种解析策略
      * @param {string} url - 视频URL
      * @returns {Object} 解析结果
@@ -451,8 +524,9 @@ class DouyinParser {
         console.log('🚀 启动多策略解析:', url);
         
         const strategies = [
-            () => this.parse(url), // 原有解析方法
-            () => this.parseByAwemeAPI(url), // 新增API方法
+            () => this.parseWithThirdPartyAPI(url), // 优先使用第三方API
+            () => this.parse(url), // 原有解析方法  
+            () => this.parseByAwemeAPI(url), // 抖音官方API方法
             () => this.parseByWebScraping(url) // 网页抓取方法
         ];
         
