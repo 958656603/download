@@ -364,9 +364,8 @@ class VideoDownloaderApp {
         this.dom.videoPlatform.textContent = data.platform || '未知平台';
         this.dom.videoSize.textContent = data.size || '未知大小';
         
-        // 设置下载链接
-        this.dom.downloadLink.href = data.download_url;
-        this.dom.downloadLink.download = data.filename || 'video.mp4';
+        // 设置下载链接和处理下载逻辑
+        this.setupDownloadButton(data);
         
         // 显示成功结果
         this.dom.successResult.classList.remove('hidden');
@@ -375,6 +374,135 @@ class VideoDownloaderApp {
         
         // 滚动到结果区域
         this.scrollToResult();
+    }
+    
+    /**
+     * 设置下载按钮的行为
+     * @param {Object} data - 视频数据
+     */
+    setupDownloadButton(data) {
+        const downloadUrl = data.download_url;
+        
+        // 移除之前的事件监听器
+        const newDownloadBtn = this.dom.downloadLink.cloneNode(true);
+        this.dom.downloadLink.parentNode.replaceChild(newDownloadBtn, this.dom.downloadLink);
+        this.dom.downloadLink = newDownloadBtn;
+        
+        // 检查链接类型
+        if (this.isDirectVideoUrl(downloadUrl)) {
+            // 直接视频链接，使用标准下载
+            this.dom.downloadLink.href = downloadUrl;
+            this.dom.downloadLink.download = data.filename || 'video.mp4';
+            console.log('🎬 设置直接下载链接:', downloadUrl);
+        } else {
+            // 非直接视频链接，使用代理下载
+            this.dom.downloadLink.href = '#';
+            this.dom.downloadLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.handleProxyDownload(downloadUrl, data.filename || 'video.mp4');
+            });
+            console.log('🔄 设置代理下载链接:', downloadUrl);
+        }
+    }
+    
+    /**
+     * 判断是否为直接视频文件链接
+     * @param {string} url - URL地址
+     * @returns {boolean} 是否为直接视频链接
+     */
+    isDirectVideoUrl(url) {
+        const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'];
+        const apiPatterns = [
+            /aweme\.snssdk\.com.*play/,
+            /video-.*\.mp4/,
+            /\.mp4\?/,
+            /v\.douyin\.com.*\.mp4/
+        ];
+        
+        const urlLower = url.toLowerCase();
+        
+        // 检查文件扩展名
+        if (videoExtensions.some(ext => urlLower.includes(ext))) {
+            return true;
+        }
+        
+        // 检查API模式
+        if (apiPatterns.some(pattern => pattern.test(url))) {
+            return true;
+        }
+        
+        // 排除明显的页面链接
+        if (urlLower.includes('douyin.com/video/') || 
+            urlLower.includes('douyin.com/share/')) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * 处理代理下载（通过fetch获取并下载）
+     * @param {string} url - 视频URL
+     * @param {string} filename - 文件名
+     */
+    async handleProxyDownload(url, filename) {
+        try {
+            this.showToast('info', '正在准备下载...');
+            
+            // 尝试通过fetch获取视频数据
+            const response = await fetch(url, {
+                mode: 'no-cors' // 允许跨域请求
+            });
+            
+            if (!response.ok) {
+                throw new Error(`下载失败: ${response.status}`);
+            }
+            
+            const blob = await response.blob();
+            
+            // 创建下载链接
+            const downloadUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // 清理URL对象
+            URL.revokeObjectURL(downloadUrl);
+            
+            this.showToast('success', '视频下载已开始！');
+            
+        } catch (error) {
+            console.error('代理下载失败:', error);
+            
+            // 如果代理下载失败，提供备用方案
+            this.showDownloadAlternatives(url, filename);
+        }
+    }
+    
+    /**
+     * 显示下载备用方案
+     * @param {string} url - 视频URL
+     * @param {string} filename - 文件名
+     */
+    showDownloadAlternatives(url, filename) {
+        const message = `
+            直接下载失败，请尝试以下方案：
+            1. 右键点击下方链接，选择"另存为"
+            2. 或复制链接到下载工具（如IDM）中下载
+        `;
+        
+        this.showToast('warning', '请尝试右键另存为下载');
+        
+        // 更新下载按钮为直接链接
+        this.dom.downloadLink.href = url;
+        this.dom.downloadLink.target = '_blank';
+        this.dom.downloadLink.innerHTML = `
+            <i class="fas fa-external-link-alt"></i>
+            打开链接下载
+        `;
     }
     
     /**
