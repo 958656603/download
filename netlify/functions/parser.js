@@ -347,7 +347,7 @@ class DouyinParser {
     async generateRealDownloadUrl(videoId) {
         console.log('🎯 开始获取真实视频下载链接:', videoId);
         
-        // 方案1: 通过API获取真实视频链接
+        // 方案1: 通过官方API获取真实视频链接
         try {
             const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${videoId}&dytk=`;
             console.log('📡 调用抖音API:', apiUrl);
@@ -355,63 +355,90 @@ class DouyinParser {
             const response = await makeRequest(apiUrl, {
                 headers: {
                     'Referer': 'https://www.douyin.com/',
-                    'User-Agent': CONFIG.USER_AGENTS[0]
+                    'User-Agent': CONFIG.USER_AGENTS[0],
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'X-Requested-With': 'XMLHttpRequest'
                 }
             });
             
             const data = await response.json();
+            console.log('📦 API响应状态:', response.status);
             
             if (data.item_list && data.item_list[0]) {
                 const item = data.item_list[0];
+                console.log('🎬 视频项结构:', Object.keys(item.video || {}));
                 
-                // 优先尝试获取无水印视频链接
-                let videoUrl = null;
+                // 多种方式尝试获取真实的MP4视频链接
+                let realVideoUrl = null;
                 
-                if (item.video?.play_addr?.url_list) {
-                    videoUrl = item.video.play_addr.url_list[0];
-                } else if (item.video?.download_addr?.url_list) {
-                    videoUrl = item.video.download_addr.url_list[0];
+                // 尝试从不同的数据结构中获取视频链接
+                if (item.video?.play_addr?.url_list && item.video.play_addr.url_list.length > 0) {
+                    // 获取最高质量的视频链接
+                    const urlList = item.video.play_addr.url_list;
+                    realVideoUrl = urlList[urlList.length - 1]; // 通常最后一个是最高质量
+                    console.log('✅ 从play_addr获取视频链接');
+                } else if (item.video?.download_addr?.url_list && item.video.download_addr.url_list.length > 0) {
+                    const urlList = item.video.download_addr.url_list;
+                    realVideoUrl = urlList[urlList.length - 1];
+                    console.log('✅ 从download_addr获取视频链接');
                 }
                 
-                if (videoUrl) {
-                    // 处理链接，去除水印标记
-                    videoUrl = videoUrl.replace('playwm', 'play');
-                    console.log('✅ 成功获取API视频链接:', videoUrl);
-                    return videoUrl;
+                if (realVideoUrl) {
+                    // 确保获取到的是真实的MP4链接而不是API接口
+                    if (realVideoUrl.includes('.mp4') || realVideoUrl.includes('video')) {
+                        // 处理链接，去水印并优化
+                        realVideoUrl = realVideoUrl
+                            .replace('playwm', 'play')  // 去水印
+                            .replace(/watermark=1/, 'watermark=0')  // 去水印参数
+                            .replace(/&line=\d+/, '&line=0'); // 使用最佳线路
+                        
+                        console.log('🎯 获取到真实MP4链接:', realVideoUrl);
+                        return realVideoUrl;
+                    } else {
+                        console.log('⚠️ 获取的链接不是MP4文件:', realVideoUrl);
+                    }
+                }
+            }
+            
+            console.log('❌ API未返回有效的视频链接');
+        } catch (error) {
+            console.log('❌ API调用失败:', error.message);
+        }
+        
+        // 方案2: 尝试通过移动端API获取
+        try {
+            console.log('🔄 尝试移动端API...');
+            const mobileApiUrl = `https://aweme.snssdk.com/aweme/v1/aweme/detail/?aweme_id=${videoId}`;
+            
+            const mobileResponse = await makeRequest(mobileApiUrl, {
+                headers: {
+                    'User-Agent': 'com.ss.android.ugc.aweme/110101 (Linux; U; Android 5.1.1; zh_CN; MI 9; Build/NMF26X; Cronet/TTNetVersion:b4d74d15 2020-04-23 QuicVersion:0144c772 2020-03-24)',
+                    'Accept-Encoding': 'gzip, deflate'
+                }
+            });
+            
+            const mobileData = await mobileResponse.json();
+            
+            if (mobileData.aweme_list && mobileData.aweme_list[0]) {
+                const aweme = mobileData.aweme_list[0];
+                if (aweme.video?.play_addr?.url_list) {
+                    const videoUrl = aweme.video.play_addr.url_list[0]
+                        .replace('playwm', 'play')
+                        .replace(/watermark=1/, 'watermark=0');
+                    
+                    if (videoUrl.includes('.mp4') || videoUrl.includes('video')) {
+                        console.log('✅ 移动端API获取成功:', videoUrl);
+                        return videoUrl;
+                    }
                 }
             }
         } catch (error) {
-            console.log('❌ API方案失败:', error.message);
+            console.log('❌ 移动端API失败:', error.message);
         }
         
-        // 方案2: 使用构造的直接链接（备用）
-        const fallbackUrls = [
-            `https://aweme.snssdk.com/aweme/v1/play/?video_id=${videoId}&ratio=720p&line=0`,
-            `https://v26-web.douyinvod.com/${videoId}/play/720p.mp4`,
-            `https://v9-dy.ixigua.com/video/${videoId}/720p.mp4`
-        ];
-        
-        // 测试每个备用链接的可用性
-        for (let url of fallbackUrls) {
-            try {
-                console.log('🔄 测试备用链接:', url);
-                const testResponse = await makeRequest(url, { 
-                    method: 'HEAD',
-                    redirect: 'manual'
-                });
-                
-                if (testResponse.status === 200 || 
-                    (testResponse.status >= 300 && testResponse.status < 400)) {
-                    console.log('✅ 找到可用的备用链接:', url);
-                    return url;
-                }
-            } catch (error) {
-                console.log('❌ 备用链接不可用:', url);
-            }
-        }
-        
-        // 所有方案都失败时，返回null
-        console.log('⚠️ 无法获取真实视频下载链接');
+        // 方案3: 解析失败时返回明确的错误
+        console.log('⚠️ 所有方案都无法获取真实的MP4视频链接');
         return null;
     }
     
