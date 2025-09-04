@@ -47,7 +47,8 @@ class DouyinParser {
             /video\/(\d+)/,                    // 标准格式: /video/123456
             /modal_id=(\d+)/,                   // 发现页格式: modal_id=123456
             /share\/video\/(\d+)/,              // 分享格式: /share/video/123456
-            /\/v\/(\w+)/,                       // 短链接格式: /v/abc123
+            /v\.douyin\.com\/(\w+)/,            // 短链接格式: v.douyin.com/abc123
+            /\/v\/(\w+)/,                       // 备用短链接格式: /v/abc123
             /(\d{19})/                          // 纯数字ID格式
         ];
         
