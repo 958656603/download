@@ -1,0 +1,30 @@
+{
+  "name": "video-downloader-app",
+  "version": "1.0.0",
+  "description": "视频解析下载器 - 支持抖音、快手、小红书等平台的无水印视频下载",
+  "main": "public/script.js",
+  "scripts": {
+    "build": "echo 'No build command required - static frontend only'",
+    "dev": "netlify dev",
+    "deploy": "netlify deploy --prod"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {},
+  "keywords": [
+    "video",
+    "downloader",
+    "parser",
+    "douyin",
+    "kuaishou",
+    "xiaohongshu",
+    "bilibili",
+    "netlify-functions"
+  ],
+  "author": "Doro",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
