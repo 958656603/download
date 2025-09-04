@@ -1,3 +1,4 @@
+// 导入node-fetch （兼容Netlify Functions）
 const fetch = require('node-fetch');
 
 /**
@@ -67,12 +68,18 @@ async function makeRequest(url, options = {}) {
     
     for (let attempt = 0; attempt < CONFIG.MAX_RETRIES; attempt++) {
         try {
+            // 创建手动超时控制（替代AbortSignal.timeout）
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT);
+            
             const response = await fetch(url, {
                 method: options.method || 'GET',
                 headers: defaultHeaders,
                 redirect: options.redirect || 'follow',
-                signal: AbortSignal.timeout(CONFIG.REQUEST_TIMEOUT)
+                signal: controller.signal
             });
+            
+            clearTimeout(timeoutId);
             
             // 对于重定向状态码，不抛出错误
             if (!response.ok && !(response.status >= 300 && response.status < 400)) {
@@ -187,10 +194,11 @@ class DouyinParser {
         } catch (error) {
             console.error('解析HTML失败:', error.message);
             
-            // 备用方案：构造基础响应
+            // 备用方案：尝试构造直接下载链接
+            console.log('使用备用方案构造下载链接');
             return {
                 title: '抖音视频',
-                downloadUrl: `https://www.douyin.com/video/${videoId}`, // 临时链接
+                downloadUrl: null, // 无法获取真实下载链接时返回null
                 author: '',
                 duration: 0
             };
@@ -298,7 +306,7 @@ function getParser(platform) {
 /**
  * Netlify Functions 处理器
  */
-export const handler = async (event, context) => {
+exports.handler = async (event, context) => {
     // 设置CORS头
     const headers = {
         'Access-Control-Allow-Origin': '*',
@@ -389,6 +397,12 @@ export const handler = async (event, context) => {
         try {
             const result = await parser.parse(videoUrl);
             
+            // 确保返回结果包含必要字段
+            if (!result.success && !result.message) {
+                result.success = false;
+                result.message = '解析失败，请稍后重试';
+            }
+            
             return {
                 statusCode: 200,
                 headers,
@@ -396,26 +410,34 @@ export const handler = async (event, context) => {
             };
             
         } catch (parseError) {
+            console.error('解析错误详情:', parseError);
             return {
                 statusCode: 400,
                 headers,
                 body: JSON.stringify({
                     success: false,
-                    message: parseError.message
+                    message: parseError.message || '解析过程中发生错误'
                 })
             };
         }
         
     } catch (error) {
         // 记录错误详情
-        console.error('解析过程中发生错误:', error);
+        console.error('函数执行错误:', {
+            message: error.message,
+            stack: error.stack,
+            url: videoUrl || 'unknown',
+            method: event.httpMethod,
+            body: event.body
+        });
         
         return {
             statusCode: 500,
             headers,
             body: JSON.stringify({
                 success: false,
-                message: '服务器内部错误，请稍后重试'
+                message: '服务器内部错误，请稍后重试',
+                debug: process.env.NODE_ENV === 'development' ? error.message : undefined
             })
         };
     }
