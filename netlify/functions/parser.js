@@ -443,6 +443,114 @@ class DouyinParser {
     }
     
     /**
+     * 使用最新算法解析抖音视频（基于腾讯云文章方法）
+     * @param {string} url - 视频URL
+     * @returns {Object} 解析结果
+     */
+    async parseWithLatestAlgorithm(url) {
+        console.log('🔥 使用最新算法解析抖音视频:', url);
+        
+        try {
+            // 步骤1: 提取视频ID
+            const videoId = this.extractVideoId(url);
+            if (!videoId) {
+                throw new Error('无法提取视频ID');
+            }
+            
+            console.log('📋 提取到视频ID:', videoId);
+            
+            // 步骤2: 构造分享页面URL
+            const shareUrl = `https://www.iesdouyin.com/share/video/${videoId}`;
+            console.log('🔗 构造分享URL:', shareUrl);
+            
+            // 步骤3: 使用iPhone User-Agent访问页面
+            const headers = {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/121.0.2277.107 Version/17.0 Mobile/15E148 Safari/604.1',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': 'https://www.douyin.com/',
+                'Connection': 'keep-alive'
+            };
+            
+            const response = await makeRequest(shareUrl, { headers });
+            if (!response.ok) {
+                throw new Error(`页面请求失败: ${response.status}`);
+            }
+            
+            const htmlContent = await response.text();
+            console.log('📄 成功获取页面内容，长度:', htmlContent.length);
+            
+            // 步骤4: 使用正则表达式提取 window._ROUTER_DATA
+            const pattern = /window\._ROUTER_DATA\s*=\s*(.*?)<\/script>/s;
+            const match = pattern.exec(htmlContent);
+            
+            if (!match || !match[1]) {
+                throw new Error('未找到 window._ROUTER_DATA 数据');
+            }
+            
+            console.log('🎯 成功匹配到路由数据');
+            
+            // 步骤5: 解析JSON数据
+            const jsonStr = match[1].trim();
+            let jsonData;
+            
+            try {
+                jsonData = JSON.parse(jsonStr);
+            } catch (parseError) {
+                console.error('JSON解析失败:', parseError);
+                throw new Error('JSON数据解析失败');
+            }
+            
+            console.log('✅ JSON解析成功');
+            
+            // 步骤6: 从特定路径提取视频信息
+            const videoPath = `video_(${videoId})/page`;
+            const loaderData = jsonData?.loaderData?.[videoPath]?.videoInfoRes?.item_list?.[0];
+            
+            if (!loaderData) {
+                throw new Error('未找到视频详细信息');
+            }
+            
+            console.log('🎬 成功提取视频数据');
+            
+            // 步骤7: 获取视频播放地址并去水印
+            const playAddr = loaderData?.video?.play_addr?.url_list?.[0];
+            if (!playAddr) {
+                throw new Error('未找到视频播放地址');
+            }
+            
+            // 关键的去水印处理：将"playwm"替换为"play"
+            const cleanVideoUrl = playAddr.replace('playwm', 'play');
+            console.log('🎭 原始链接:', playAddr);
+            console.log('✨ 去水印链接:', cleanVideoUrl);
+            
+            // 验证是否为真实视频文件
+            if (!this.isRealVideoFile(cleanVideoUrl)) {
+                throw new Error('获取的链接不是有效的视频文件');
+            }
+            
+            // 步骤8: 构造返回结果
+            return {
+                success: true,
+                title: loaderData?.desc || '抖音视频',
+                download_url: cleanVideoUrl,
+                platform: this.platformName,
+                video_id: videoId,
+                author: loaderData?.author?.nickname || '未知作者',
+                duration: loaderData?.video?.duration || 0,
+                size: '未知',
+                filename: `douyin_${videoId}.mp4`,
+                note: '使用最新算法获取的无水印视频'
+            };
+            
+        } catch (error) {
+            console.error('❌ 最新算法解析失败:', error);
+            throw error;
+        }
+    }
+
+    /**
      * 使用第三方API解析服务
      * @param {string} url - 视频URL
      * @returns {Object} 解析结果
@@ -524,7 +632,8 @@ class DouyinParser {
         console.log('🚀 启动多策略解析:', url);
         
         const strategies = [
-            () => this.parseWithThirdPartyAPI(url), // 优先使用第三方API
+            () => this.parseWithLatestAlgorithm(url), // 最高优先级：最新算法（腾讯云文章方法）
+            () => this.parseWithThirdPartyAPI(url), // 第三方API备用
             () => this.parse(url), // 原有解析方法  
             () => this.parseByAwemeAPI(url), // 抖音官方API方法
             () => this.parseByWebScraping(url) // 网页抓取方法
