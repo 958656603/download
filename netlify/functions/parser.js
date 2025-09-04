@@ -129,13 +129,13 @@ class DouyinParser {
             const videoId = this.extractVideoId(realUrl);
             if (!videoId) {
                 // 如果从重定向URL无法提取，尝试从原始URL提取
-                console.log('⚠️ 从重定向URL无法提取视频ID，尝试原始URL');
+                console.log('❌ 从原始URL无法提取视频ID，尝试原始URL');
                 const originalVideoId = this.extractVideoId(url);
                 if (!originalVideoId) {
                     throw new Error(`无法提取视频ID。原始URL: ${url}, 重定向URL: ${realUrl}`);
                 }
                 console.log('✅ 从原始URL提取到视频ID:', originalVideoId);
-                return this.createFallbackResult(originalVideoId);
+                return await this.createFallbackResult(originalVideoId);
             }
             
             console.log('✅ 成功提取视频ID:', videoId);
@@ -162,7 +162,7 @@ class DouyinParser {
                 
                 if (!videoData.downloadUrl) {
                     console.log('⚠️ 无法获取下载链接，返回备用结果');
-                    return this.createFallbackResult(videoId);
+                    return await this.createFallbackResult(videoId);
                 }
                 
                 console.log('✅ 成功解析视频数据');
@@ -180,7 +180,7 @@ class DouyinParser {
                 
             } catch (pageError) {
                 console.log('⚠️ 页面访问失败，返回备用结果:', pageError.message);
-                return this.createFallbackResult(videoId);
+                return await this.createFallbackResult(videoId);
             }
             
         } catch (error) {
@@ -306,55 +306,113 @@ class DouyinParser {
     /**
      * 创建备用解析结果（当无法获取详细信息时）
      * @param {string} videoId - 视频ID
-     * @returns {Object} 备用结果对象
+     * @returns {Promise<Object>} 备用结果对象
      */
-    createFallbackResult(videoId) {
+    async createFallbackResult(videoId) {
         console.log('📋 创建备用解析结果:', videoId);
         
-        // 尝试通过第三方API获取视频链接
-        const directDownloadUrl = this.generateDirectDownloadUrl(videoId);
+        // 尝试获取真实视频下载链接
+        const realDownloadUrl = await this.generateRealDownloadUrl(videoId);
         
-        return {
-            success: true,
-            title: `抖音视频_${videoId}`,
-            download_url: directDownloadUrl,
-            platform: this.platformName,
-            video_id: videoId,
-            author: '未知作者',
-            duration: 0,
-            size: '未知',
-            filename: `douyin_${videoId}.mp4`,
-            note: '使用备用下载方案获取视频'
-        };
+        if (realDownloadUrl) {
+            console.log('✅ 备用方案成功获取视频链接');
+            return {
+                success: true,
+                title: `抖音视频_${videoId}`,
+                download_url: realDownloadUrl,
+                platform: this.platformName,
+                video_id: videoId,
+                author: '未知作者',
+                duration: 0,
+                size: '未知',
+                filename: `douyin_${videoId}.mp4`,
+                note: '已获取无水印视频链接'
+            };
+        } else {
+            console.log('❌ 备用方案也无法获取视频链接');
+            return {
+                success: false,
+                message: '抱歉，暂时无法解析此抖音视频。可能原因：1. 视频为私密或已删除 2. 网络问题 3. 抖音接口限制。请稍后重试或使用其他视频。',
+                platform: this.platformName,
+                video_id: videoId
+            };
+        }
     }
     
     /**
-     * 生成直接下载链接（使用多种备用方案）
+     * 异步获取真实视频下载链接
      * @param {string} videoId - 视频ID
-     * @returns {string} 可下载的视频链接
+     * @returns {Promise<string>} 可下载的视频链接
      */
-    generateDirectDownloadUrl(videoId) {
-        // 备用方案数组，按优先级排序
-        const downloadMethods = [
-            // 方案1: 抖音官方API (通常最稳定)
-            `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${videoId}&dytk=`,
+    async generateRealDownloadUrl(videoId) {
+        console.log('🎯 开始获取真实视频下载链接:', videoId);
+        
+        // 方案1: 通过API获取真实视频链接
+        try {
+            const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${videoId}&dytk=`;
+            console.log('📡 调用抖音API:', apiUrl);
             
-            // 方案2: 抖音国际版API
+            const response = await makeRequest(apiUrl, {
+                headers: {
+                    'Referer': 'https://www.douyin.com/',
+                    'User-Agent': CONFIG.USER_AGENTS[0]
+                }
+            });
+            
+            const data = await response.json();
+            
+            if (data.item_list && data.item_list[0]) {
+                const item = data.item_list[0];
+                
+                // 优先尝试获取无水印视频链接
+                let videoUrl = null;
+                
+                if (item.video?.play_addr?.url_list) {
+                    videoUrl = item.video.play_addr.url_list[0];
+                } else if (item.video?.download_addr?.url_list) {
+                    videoUrl = item.video.download_addr.url_list[0];
+                }
+                
+                if (videoUrl) {
+                    // 处理链接，去除水印标记
+                    videoUrl = videoUrl.replace('playwm', 'play');
+                    console.log('✅ 成功获取API视频链接:', videoUrl);
+                    return videoUrl;
+                }
+            }
+        } catch (error) {
+            console.log('❌ API方案失败:', error.message);
+        }
+        
+        // 方案2: 使用构造的直接链接（备用）
+        const fallbackUrls = [
             `https://aweme.snssdk.com/aweme/v1/play/?video_id=${videoId}&ratio=720p&line=0`,
-            
-            // 方案3: 使用TikTok相关API (抖音海外版)
-            `https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id=${videoId}`,
-            
-            // 方案4: 备用域名
-            `https://v26-web.douyinvod.com/video/${videoId}/720p.mp4`
+            `https://v26-web.douyinvod.com/${videoId}/play/720p.mp4`,
+            `https://v9-dy.ixigua.com/video/${videoId}/720p.mp4`
         ];
         
-        // 返回第一个方案，后续可以在前端实现重试逻辑
-        const selectedUrl = downloadMethods[0];
-        console.log('🎯 生成直接下载链接:', selectedUrl);
-        console.log('📋 备用方案共计:', downloadMethods.length, '个');
+        // 测试每个备用链接的可用性
+        for (let url of fallbackUrls) {
+            try {
+                console.log('🔄 测试备用链接:', url);
+                const testResponse = await makeRequest(url, { 
+                    method: 'HEAD',
+                    redirect: 'manual'
+                });
+                
+                if (testResponse.status === 200 || 
+                    (testResponse.status >= 300 && testResponse.status < 400)) {
+                    console.log('✅ 找到可用的备用链接:', url);
+                    return url;
+                }
+            } catch (error) {
+                console.log('❌ 备用链接不可用:', url);
+            }
+        }
         
-        return selectedUrl;
+        // 所有方案都失败时，返回null
+        console.log('⚠️ 无法获取真实视频下载链接');
+        return null;
     }
     
     /**
@@ -403,31 +461,67 @@ class DouyinParser {
             throw new Error('无法从URL中提取视频ID');
         }
         
-        const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${videoId}`;
+        const apiUrl = `https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids=${videoId}&dytk=`;
+        console.log('📡 调用抖音官方API:', apiUrl);
         
         try {
             const response = await makeRequest(apiUrl, {
                 headers: {
                     'Referer': 'https://www.douyin.com/',
-                    'User-Agent': CONFIG.USER_AGENTS[1]
+                    'User-Agent': CONFIG.USER_AGENTS[1],
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'X-Requested-With': 'XMLHttpRequest'
                 }
             });
             
             const data = await response.json();
+            console.log('📦 API响应数据结构:', Object.keys(data));
             
-            if (data.item_list && data.item_list[0]) {
+            if (data.item_list && data.item_list.length > 0) {
                 const item = data.item_list[0];
-                const videoUrl = item.video?.play_addr?.url_list?.[0] || 
-                                 item.video?.download_addr?.url_list?.[0];
+                console.log('🎬 视频项数据:', Object.keys(item));
+                
+                // 多种方式尝试获取视频链接
+                let videoUrl = null;
+                let title = item.desc || `抖音视频_${videoId}`;
+                let author = item.author?.nickname || '未知作者';
+                
+                // 方案1: play_addr
+                if (item.video?.play_addr?.url_list && item.video.play_addr.url_list.length > 0) {
+                    videoUrl = item.video.play_addr.url_list[0];
+                    console.log('✅ 从play_addr获取视频链接');
+                }
+                // 方案2: download_addr 
+                else if (item.video?.download_addr?.url_list && item.video.download_addr.url_list.length > 0) {
+                    videoUrl = item.video.download_addr.url_list[0];
+                    console.log('✅ 从download_addr获取视频链接');
+                }
+                // 方案3: bit_rate数组中的链接
+                else if (item.video?.bit_rate && item.video.bit_rate.length > 0) {
+                    const bitRate = item.video.bit_rate.find(br => br.play_addr?.url_list?.length > 0);
+                    if (bitRate) {
+                        videoUrl = bitRate.play_addr.url_list[0];
+                        console.log('✅ 从bit_rate获取视频链接');
+                    }
+                }
                 
                 if (videoUrl) {
+                    // 处理链接，去除水印标记并确保使用高清版本
+                    videoUrl = videoUrl
+                        .replace('playwm', 'play')  // 去水印
+                        .replace(/watermark=1/, 'watermark=0')  // 去水印参数
+                        .replace(/&ratio=\d+p/, '&ratio=720p'); // 确保高清
+                    
+                    console.log('🎯 最终视频下载链接:', videoUrl);
+                    
                     return {
                         success: true,
-                        title: item.desc || `抖音视频_${videoId}`,
-                        download_url: videoUrl.replace('playwm', 'play'), // 去水印处理
+                        title: title,
+                        download_url: videoUrl,
                         platform: this.platformName,
                         video_id: videoId,
-                        author: item.author?.nickname || '未知作者',
+                        author: author,
                         duration: Math.round((item.video?.duration || 0) / 1000),
                         size: '未知',
                         filename: `douyin_${videoId}.mp4`
@@ -435,9 +529,11 @@ class DouyinParser {
                 }
             }
             
-            throw new Error('API返回数据格式异常');
+            console.log('❌ API返回数据中未找到视频链接');
+            throw new Error('API返回数据格式异常或无视频链接');
             
         } catch (error) {
+            console.error('🚨 API解析详细错误:', error);
             throw new Error(`API解析失败: ${error.message}`);
         }
     }
